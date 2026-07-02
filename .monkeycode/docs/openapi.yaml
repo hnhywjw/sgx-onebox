@@ -1,0 +1,381 @@
+openapi: 3.0.3
+info:
+  title: SGX OneBox Platform API
+  version: 1.0.0
+  description: API for SGX OneBox platform management and security operations.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Token
+  schemas:
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+        db:
+          type: string
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/UserView'
+    UserView:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+        lastLoginAt:
+          type: string
+    UserPayload:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+        password:
+          type: string
+    ChangePasswordPayload:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+paths:
+  /api/v1/health:
+    get:
+      security: []
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /api/v1/auth/login:
+    post:
+      security: []
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '423':
+          description: Locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/auth/logout:
+    post:
+      summary: Logout
+      responses:
+        '200':
+          description: OK
+  /api/v1/auth/me:
+    get:
+      summary: Current user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserView'
+  /api/v1/auth/password:
+    post:
+      summary: Change password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordPayload'
+      responses:
+        '200':
+          description: OK
+  /api/v1/dashboard:
+    get:
+      summary: Dashboard snapshot
+      responses:
+        '200':
+          description: OK
+  /api/v1/users:
+    get:
+      summary: List users
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPayload'
+      responses:
+        '201':
+          description: Created
+  /api/v1/users/{id}:
+    put:
+      summary: Update user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPayload'
+      responses:
+        '200':
+          description: Updated
+    delete:
+      summary: Delete user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted
+  /api/v1/images:
+    get:
+      summary: List images
+      responses:
+        '200': { description: OK }
+  /api/v1/components:
+    get:
+      summary: List components
+      responses:
+        '200': { description: OK }
+  /api/v1/networks:
+    get:
+      summary: List networks
+      responses:
+        '200': { description: OK }
+  /api/v1/enclaves:
+    get:
+      summary: List enclaves
+      responses:
+        '200': { description: OK }
+  /api/v1/install-packages:
+    get:
+      summary: List install packages
+      responses:
+        '200': { description: OK }
+  /api/v1/install-packages/{id}:
+    put:
+      summary: Update install package
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete install package
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Deleted }
+  /api/v1/cluster/quotas:
+    get:
+      summary: List cluster quotas
+      responses:
+        '200': { description: OK }
+  /api/v1/cluster/upgrade:
+    post:
+      summary: Trigger cluster upgrade
+      responses:
+        '200': { description: OK }
+  /api/v1/enclave-keys:
+    get:
+      summary: List enclave keys
+      responses:
+        '200': { description: OK }
+  /api/v1/enclave-keys/{id}:
+    put:
+      summary: Update enclave key
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete enclave key
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Deleted }
+  /api/v1/enclave-inspections/run:
+    post:
+      summary: Run enclave inspection
+      responses:
+        '200': { description: OK }
+  /api/v1/security-policies:
+    get:
+      summary: List security policies
+      responses:
+        '200': { description: OK }
+    post:
+      summary: Create security policy
+      responses:
+        '201': { description: Created }
+  /api/v1/security-policies/{id}:
+    put:
+      summary: Update security policy
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete security policy
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Deleted }
+  /api/v1/compliance-tasks:
+    get:
+      summary: List compliance tasks
+      responses:
+        '200': { description: OK }
+    post:
+      summary: Create compliance task
+      responses:
+        '201': { description: Created }
+  /api/v1/compliance-tasks/{id}:
+    delete:
+      summary: Delete compliance task
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Deleted }
+  /api/v1/system-settings:
+    get:
+      summary: List system settings
+      responses:
+        '200': { description: OK }
+    post:
+      summary: Create system setting
+      responses:
+        '201': { description: Created }
+  /api/v1/system-settings/{id}:
+    put:
+      summary: Update system setting
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete system setting
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Deleted }
+  /api/v1/attestations/run:
+    post:
+      summary: Run attestation
+      responses:
+        '200': { description: OK }
+  /api/v1/compliance/run:
+    post:
+      summary: Run compliance
+      responses:
+        '200': { description: OK }

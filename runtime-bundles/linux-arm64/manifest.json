@@ -1,0 +1,9 @@
+{
+  "k3sVersion": "v1.30.4+k3s1",
+  "runtimeVersion": "containerd://1.7.21-k3s1",
+  "kubectlVersion": "v1.30.4",
+  "sgxDriverVersion": "2.25",
+  "dcapVersion": "1.20",
+  "osFamily": ["linux", "ubuntu", "debian", "rhel", "centos", "rocky", "almalinux"],
+  "sha256": {}
+}

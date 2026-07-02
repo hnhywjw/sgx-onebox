@@ -1,0 +1,20 @@
+{
+  "k3sVersion": "v1.30.4+k3s1",
+  "runtimeVersion": "containerd://1.7.21-k3s1",
+  "kubectlVersion": "v1.30.4",
+  "sgxDriverVersion": "2.29.100.1",
+  "dcapVersion": "1.26.100.1",
+  "osFamily": ["linux", "ubuntu", "debian"],
+  "sha256": {
+    "install.sh": "20158825960f0e61745b77b9e3f4ff360c030fed4b7d7b741ced327b0b3479c2",
+    "install-sgx.sh": "ebdf26a88f55c1a44251fbc32dbe8e6b220df109bbae86bc2706d9951493cf84",
+    "build-dcap-verify-quote.sh": "41eee686de92bff1499b5a3c36a644fb872bbd9dd419502788c94e6aea6b33c1",
+    "k3s-install.sh": "d264d4d43f7c5a27b44de0075513fb22dfb02d0b7cd33ba7a3838cb822f4729c",
+    "k3s": "fb942b7870d9a88e10d063e9f52b99fa538becca761e2578887e04e5ce167e53",
+    "kubectl": "2ffd023712bbc1a9390dbd8c0c15201c165a69d394787ef03eda3eccb4b9ac06",
+    "crictl": "1899856526fde27f54ff4568ba5b0db00a182b6e7ff129efb1c0bb4950652a69",
+    "ctr": "ebea495a4456a1796ea9b5edc5cc0961eeebb585caec0a8defd1f2d14499cc87",
+    "k3s-airgap-images-amd64.tar.gz": "818fd9099d353d64f79d2e5c171388105932fe39db19d7fc28b021143f10245b",
+    "sgx-packages.tar.gz": "507d26f4782713e5714c5f1381374ebe2bde2110d34375659992b82e03450a11"
+  }
+}

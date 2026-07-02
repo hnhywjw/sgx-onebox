@@ -1,0 +1,14 @@
+{
+  "name": "sgx-onebox-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "build:web": "npm run build --workspace apps/web",
+    "lint:web": "npm run lint --workspace apps/web",
+    "typecheck:web": "npm run typecheck --workspace apps/web"
+  }
+}

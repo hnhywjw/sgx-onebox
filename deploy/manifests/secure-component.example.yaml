@@ -1,0 +1,19 @@
+apiVersion: onebox.monkeycode.ai/v1alpha1
+kind: SecureComponent
+metadata:
+  name: key-keeper
+spec:
+  image: registry.local/security/key-keeper@sha256:fixed-digest
+  isolation: enclave
+  replicas: 1
+  namespace: core-secure
+  networkAttachments:
+    - net-mgmt
+  enclaveProfile:
+    mrEnclave: 0x72cdaf12be90
+    mrSigner: 0x5abf87239011
+    quotePolicy: strict-production
+    secretsPolicy: attestation-gated
+    sgxDevices:
+      - /dev/sgx_enclave
+      - /dev/sgx_provision

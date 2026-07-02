@@ -1,0 +1,96 @@
+# 需求实施计划
+
+- [x] 1. 扩展领域模型和持久化快照
+  - [x] 1.1 扩展 `ClusterNode`、新增 `ProvisioningTask`、`ProvisioningStep`、`OfflineBundleManifest`
+    - 修改 `internal/domain/models.go`，补充自动装机字段和 JSON 标签
+    - 覆盖需求 1.1、1.2、1.3、1.4、7.1、8.1、9.2
+  - [x] 1.2 扩展 `store.Snapshot` 和 SQLite schema version
+    - 修改 `internal/store/store.go`、`internal/store/sqlite.go`、`internal/store/seed.go`
+    - 确保 `provisioningTasks` 能随 dashboard snapshot 持久化
+    - 覆盖需求 7.1、7.2、8.1
+  - [x] 1.3 补充前端类型定义
+    - 修改 `apps/web/src/types.ts`，对齐后端新增字段
+    - 覆盖需求 1.1、7.2
+  - [x] 1.4 编写模型与快照持久化测试
+    - 验证 provisioning task 能写入、读取和序列化
+    - 覆盖需求 7.1、8.1
+
+- [x] 2. 实现自动装机任务创建与状态管理
+  - [x] 2.1 在 `PlatformService` 中实现任务创建、重试、取消、状态保存方法
+    - 新增 `CreateProvisioningTask`、`RetryProvisioningTask`、`CancelProvisioningTask`、`SaveProvisioningTaskStatus`
+    - 覆盖需求 7.1、7.3、7.5、9.3
+  - [x] 2.2 修改 `SaveClusterNode` 创建自动装机任务
+    - 根据节点角色、安装模式、SGX 选项生成步骤列表
+    - SSH 信息缺失时拒绝创建自动装机任务
+    - 覆盖需求 1.2、1.3、1.4、1.5
+  - [x] 2.3 编写服务层任务状态测试
+    - 覆盖控制面、worker、SGX、取消、重试和缺少 SSH 凭据场景
+    - 覆盖需求 1.2、1.3、1.4、7.3、7.5
+
+- [x] 3. 实现 API 接口与 dashboard 暴露
+  - [x] 3.1 扩展 dashboard snapshot 响应
+    - 让前端能读取 `provisioningTasks`
+    - 覆盖需求 7.2、8.1
+  - [x] 3.2 新增 provisioning task detail、retry、cancel API
+    - 修改 `internal/api/server.go`
+    - 使用现有 RBAC：平台管理员、运维员可操作，审计员可查看
+    - 覆盖需求 7.2、7.3、7.5
+  - [x] 3.3 编写 API 测试
+    - 覆盖任务详情、重试、取消和权限
+    - 覆盖需求 7.2、7.3、7.5、9.1
+
+- [x] 4. 实现 executor 自动装机执行器
+  - [x] 4.1 新增 provisioning worker 调度
+    - 在 `internal/executor` 中扫描 pending/running task，并限制并发
+    - 覆盖需求 7.2、7.4
+  - [x] 4.2 实现 preflight 远程检查
+    - 检查 OS、架构、磁盘、内存、网络、SSH、已有 K3s、SGX 硬件能力
+    - 输出摘要脱敏后写入 step evidence
+    - 覆盖需求 2.1、2.2、2.3、2.4、9.3
+  - [x] 4.3 实现 K3s server/agent 安装步骤
+    - 在线模式使用配置源，离线模式引用离线资源包
+    - worker 使用执行时 token 注入
+    - 覆盖需求 3.1、3.2、3.3、3.4、6.1、6.2、9.2
+  - [x] 4.4 实现 runtime 工具检查与安装步骤
+    - 验证 `containerd`、`crictl`、`ctr`、`kubectl` 或 `k3s kubectl`
+    - 覆盖需求 4.1、4.2、4.3、4.4
+  - [x] 4.5 实现 SGX/DCAP 检查与安装步骤
+    - 检查 SGX 设备、EPC、DCAP 验证工具并更新 `sgxStatus`
+    - 覆盖需求 5.1、5.2、5.3、5.4、5.5
+  - [x] 4.6 编写 executor 测试
+    - 使用 fake runner 验证状态转换、失败保留、敏感信息脱敏
+    - 覆盖需求 2.3、3.4、5.4、5.5、9.3
+
+- [x] 5. 实现离线资源包识别与校验
+  - [x] 5.1 扩展安装包导入逻辑识别离线资源包 manifest
+    - 校验 manifest JSON、SHA256、OS 兼容性和组件版本
+    - 覆盖需求 6.2、6.3、6.4
+  - [x] 5.2 编写离线包校验测试
+    - 覆盖 manifest 缺失、哈希不匹配、OS 不兼容
+    - 覆盖需求 6.3、6.4
+
+- [x] 6. 更新前端节点自动装机交互
+  - [x] 6.1 扩展 `DeploymentTab` 节点新增表单
+    - 保持现有 panel、form-grid、badge、button 风格
+    - 增加安装模式、角色、SGX、离线包、控制面 endpoint、版本字段
+    - 覆盖需求 1.1、1.2、1.3、1.4、6.1、6.2
+  - [x] 6.2 扩展节点列表和任务进度展示
+    - 展示装机阶段、当前步骤、SGX 状态、查看进度、重试、取消
+    - 覆盖需求 3.5、7.2、7.3、7.5
+  - [x] 6.3 更新前端 API 封装
+    - 添加 task detail、retry、cancel 调用
+    - 覆盖需求 7.2、7.3、7.5
+
+- [x] 7. 合规与审计证据接入
+  - [x] 7.1 扩展合规报告引用自动装机 evidence
+    - 将 K3s、runtime、SGX/DCAP 真实验证摘要作为 finding 来源
+    - 覆盖需求 8.2、8.3、8.4
+  - [x] 7.2 扩展审计日志记录
+    - 记录任务创建、阶段执行、重试、取消、完成
+    - 覆盖需求 8.1、9.4
+  - [x] 7.3 编写合规与审计测试
+    - 覆盖 evidence 引用和敏感信息脱敏
+    - 覆盖需求 8.1、8.4、9.3
+
+- [x] 8. 检查点 - 确保所有测试通过
+  - 确保所有测试通过,如有疑问请询问用户
