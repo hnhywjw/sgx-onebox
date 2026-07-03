@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=/opt/sgx-onebox
 EnvironmentFile=/opt/sgx-onebox/config/platform.env
 Environment=PLATFORM_RUNTIME_BUNDLES_DIR=/opt/sgx-onebox/runtime-bundles
-ExecStart=/opt/sgx-onebox/bin/platform-api -static /opt/sgx-onebox/web -json /opt/sgx-onebox/data/platform-data.json
+ExecStart=/opt/sgx-onebox/bin/platform-api -static /opt/sgx-onebox/web
 Restart=always
 RestartSec=3
 
