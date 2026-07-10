@@ -772,6 +772,9 @@ func (e *Executor) ExecuteImageBuild(req domain.ImageBuildRequest) (bool, string
 			buildLine += "--build-arg SGX_RUNTIME=1 "
 		}
 		if buildArgs := strings.TrimSpace(req.BuildArgs); buildArgs != "" {
+			if !isSafeBuildArgs(buildArgs) {
+				return fmt.Sprintf("构建参数包含非法字符"), fmt.Errorf("构建参数包含非法字符")
+			}
 			buildLine += " " + buildArgs
 		}
 		buildLine += fmt.Sprintf(" %s 2>&1", shellQuote(buildDir))
@@ -784,4 +787,14 @@ func (e *Executor) ExecuteImageBuild(req domain.ImageBuildRequest) (bool, string
 		digest := strings.TrimSpace(digestOut)
 		return fmt.Sprintf("镜像 %s 已通过节点 %s 构建成功\nDIGEST:%s", imageName, node.Name, digest), nil
 	})
+}
+
+func isSafeBuildArgs(args string) bool {
+	for _, r := range args {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '=' || r == '_' || r == '-' || r == '.' || r == ' ' || r == ',' || r == ':' || r == '/' {
+			continue
+		}
+		return false
+	}
+	return true
 }

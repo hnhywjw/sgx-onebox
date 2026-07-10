@@ -98,6 +98,17 @@ func (e *Executor) pollProvisioningTasks() {
 	sem := make(chan struct{}, e.provisioningConcurrency)
 	var wg sync.WaitGroup
 	for _, task := range tasks {
+		if task.Status == domain.ProvisionRunning {
+			if updatedAt, err := time.Parse(time.RFC3339, task.UpdatedAt); err == nil && time.Since(updatedAt) > 30*time.Minute {
+				task.Status = domain.ProvisionFailed
+				task.Message = "任务执行超时，可能因服务重启而中断"
+				task.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				if saveErr := e.store.SaveProvisioningTaskStatus(task); saveErr != nil {
+					logWarn(fmt.Sprintf("persist timeout recovery for provisioning task %s failed: %v", task.ID, saveErr))
+				}
+			}
+			continue
+		}
 		if task.Status != domain.ProvisionPending {
 			continue
 		}

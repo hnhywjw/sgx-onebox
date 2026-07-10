@@ -297,7 +297,6 @@ func (s *PlatformService) normalizeSnapshotCollections(snapshot store.Snapshot) 
 	for index := range snapshot.ClusterNodes {
 		snapshot.ClusterNodes[index].SSHPassword = ""
 		snapshot.ClusterNodes[index].SSHPasswordCiphertext = ""
-		snapshot.ClusterNodes[index].SSHPasswordCiphertext = ""
 		snapshot.ClusterNodes[index].SSHPasswordConfigured = snapshot.ClusterNodes[index].SSHPasswordConfigured || (snapshot.ClusterNodes[index].SSHHost != "" && snapshot.ClusterNodes[index].SSHUsername != "" && !snapshot.ClusterNodes[index].SSHPasswordConfigured)
 	}
 	snapshot.LoginFailures = nil
@@ -995,6 +994,27 @@ func (s *PlatformService) runImageBuild(image domain.ImageAsset, request domain.
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[image-build] panic recovered: %v", r)
+			s.writeMu.Lock()
+			defer s.writeMu.Unlock()
+			now := time.Now().UTC().Format(time.RFC3339)
+			snapshot := s.store.Snapshot()
+			for i := range snapshot.Images {
+				if snapshot.Images[i].ID == image.ID {
+					snapshot.Images[i].LastScanAt = now
+					snapshot.Images[i].Vulnerability = "critical"
+					snapshot.ClusterLogs = append([]domain.ClusterLog{{
+						ID:         fmt.Sprintf("log-build-panic-%s-%d", image.ID, time.Now().UTC().UnixNano()),
+						NodeID:     "cluster",
+						Category:   "image",
+						Level:      "error",
+						Message:    fmt.Sprintf("镜像构建内部错误: %v", r),
+						RecordedAt: now,
+					}}, snapshot.ClusterLogs...)
+					snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "build-image-result", snapshot.Images[i].Name, "critical-error")
+					_ = s.store.Replace(snapshot)
+					break
+				}
+			}
 		}
 	}()
 	execOK, execMsg := s.executor.ExecuteImageBuild(request)
@@ -1133,7 +1153,11 @@ func (s *PlatformService) SaveInstallPackage(pkg domain.InstallPackage) error {
 	if strings.Contains(pkg.FilePath, "../") || strings.Contains(pkg.FilePath, "..\\") {
 		return errors.New("安装包文件路径包含非法字符")
 	}
-	fileInfo, statErr := os.Stat(pkg.FilePath)
+	cleanPath := filepath.Clean(pkg.FilePath)
+	if strings.HasPrefix(cleanPath, "..") {
+		return errors.New("安装包文件路径无效")
+	}
+	fileInfo, statErr := os.Stat(cleanPath)
 	if statErr != nil || fileInfo.IsDir() {
 		return errors.New("安装包文件不存在或不可读取")
 	}
@@ -3151,14 +3175,24 @@ func isSafeEndpoint(rawURL string) bool {
 	}
 	ip := net.ParseIP(host)
 	if ip != nil {
-		return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate()
+		if v4 := ip.To4(); v4 != nil {
+			ip = v4
+		}
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() {
+			return false
+		}
+		return true
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return false
 	}
 	for _, resolvedIP := range ips {
-		if resolvedIP.IsLoopback() || resolvedIP.IsLinkLocalUnicast() || resolvedIP.IsLinkLocalMulticast() || resolvedIP.IsPrivate() {
+		v4 := resolvedIP.To4()
+		if v4 == nil {
+			v4 = resolvedIP
+		}
+		if v4.IsLoopback() || v4.IsLinkLocalUnicast() || v4.IsLinkLocalMulticast() || v4.IsPrivate() || v4.IsUnspecified() {
 			return false
 		}
 	}

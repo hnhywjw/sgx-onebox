@@ -300,6 +300,7 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 			log.Printf("上传审计记录失败: %v", err)
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
+			"path": destPath,
 			"name": safeName,
 			"size": written,
 		})
@@ -2525,7 +2526,7 @@ func (s *Server) handlePluginByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requireUser(r *http.Request) (domain.UserView, error) {
-	if isUnsafeMethod(r.Method) {
+	if isUnsafeMethod(r.Method) && usesCookieToken(r) {
 		if !sameOriginRequest(r) {
 			return domain.UserView{}, errors.New("请求来源校验失败")
 		}
