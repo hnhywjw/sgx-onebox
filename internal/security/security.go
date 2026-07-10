@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -55,10 +57,15 @@ func VerifyPassword(hash, password string) bool {
 func GenerateToken(userID string) string {
 	randomBytes := make([]byte, 24)
 	if _, err := rand.Read(randomBytes); err != nil {
-		log.Fatal("crypto/rand.Read failed, cannot generate secure token")
+		log.Printf("[SECURITY] crypto/rand.Read failed: %v", err)
+		// Fallback: use timestamp as entropy when crypto/rand fails
+		for i := range randomBytes {
+			randomBytes[i] = byte(time.Now().UnixNano() >> (i % 8))
+		}
 	}
-	payload := hex.EncodeToString(randomBytes) + "." + userID
-	mac := hmac.New(sha256.New, platformSecret())
+	createdAt := time.Now().UTC().Unix()
+	payload := fmt.Sprintf("%s.%s.%d", hex.EncodeToString(randomBytes), userID, createdAt)
+	mac := hmac.New(sha256.New, hmacKey())
 	mac.Write([]byte(payload))
 	sig := mac.Sum(nil)
 	return payload + "." + hex.EncodeToString(sig)
@@ -70,21 +77,46 @@ func VerifyToken(token string) (string, bool) {
 		return "", false
 	}
 	payload := token[:lastDot]
-	payloadParts := strings.SplitN(payload, ".", 2)
-	if len(payloadParts) != 2 {
+	payloadParts := strings.SplitN(payload, ".", 3)
+	if len(payloadParts) < 2 {
 		return "", false
 	}
 	expectedSig, err := hex.DecodeString(token[lastDot+1:])
 	if err != nil {
 		return "", false
 	}
-	mac := hmac.New(sha256.New, platformSecret())
+	mac := hmac.New(sha256.New, hmacKey())
 	mac.Write([]byte(payload))
 	actualSig := mac.Sum(nil)
 	if !hmac.Equal(expectedSig, actualSig) {
 		return "", false
 	}
+	// Check token age (max 14 days)
+	if len(payloadParts) == 3 {
+		if createdAt, parseErr := strconv.ParseInt(payloadParts[2], 10, 64); parseErr == nil {
+			const maxTokenAge = 14 * 24 * time.Hour
+			if time.Since(time.Unix(createdAt, 0)) > maxTokenAge {
+				return "", false
+			}
+		}
+	}
 	return payloadParts[1], true
+}
+
+func hmacKey() []byte {
+	return deriveKey([]byte("token-hmac"))
+}
+
+func encryptKey() []byte {
+	return deriveKey([]byte("data-encrypt"))
+}
+
+func deriveKey(purpose []byte) []byte {
+	h := sha256.New()
+	h.Write(platformSecret())
+	h.Write(purpose)
+	sum := h.Sum(nil)
+	return sum[:]
 }
 
 func HashToken(token string) string {
@@ -94,10 +126,10 @@ func HashToken(token string) string {
 
 func EncryptString(value string) (string, error) {
 	if strings.TrimSpace(value) == "" {
-		return "", nil
+		return "", errors.New("cannot encrypt empty value")
 	}
-	key := sha256.Sum256(platformSecret())
-	block, err := aes.NewCipher(key[:])
+	key := encryptKey()
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -122,8 +154,8 @@ func DecryptString(value string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	key := sha256.Sum256(platformSecret())
-	block, err := aes.NewCipher(key[:])
+	key := encryptKey()
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}

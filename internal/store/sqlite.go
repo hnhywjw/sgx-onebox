@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -40,8 +41,14 @@ func NewSQLiteStore() (*SQLiteStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.Exec("PRAGMA journal_mode=WAL")
-	db.Exec("PRAGMA busy_timeout=5000")
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable WAL mode: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
 	store := &SQLiteStore{db: db}
 	if err := store.initSchema(); err != nil {
 		db.Close()
@@ -56,7 +63,9 @@ func NewSQLiteStore() (*SQLiteStore, error) {
 
 func ForceRemigrate() error {
 	dbPath := projectDBPath()
-	_ = os.Remove(dbPath)
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove old database: %w", err)
+	}
 	st, err := NewSQLiteStore()
 	if err != nil {
 		return err
@@ -207,11 +216,13 @@ func (s *SQLiteStore) normalize() {
 func cloneSnapshot(snap Snapshot) Snapshot {
 	raw, err := json.Marshal(snap)
 	if err != nil {
-		return newEmptySnapshot()
+		log.Printf("[store] ERROR: snapshot marshal failed (data loss prevented): %v", err)
+		return snap
 	}
 	var out Snapshot
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return newEmptySnapshot()
+		log.Printf("[store] ERROR: snapshot unmarshal failed (data loss prevented): %v", err)
+		return snap
 	}
 	if out.LoginFailures == nil {
 		out.LoginFailures = map[string]int{}

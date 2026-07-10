@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 )
 
 func sshConnect(host string, port int, user string, password []byte, knownHostKey string, timeout time.Duration) (*ssh.Client, error) {
+	strictCheck := os.Getenv("SSH_STRICT_HOST_KEY_CHECKING") != "0"
 	config := &ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{ssh.Password(string(password))},
@@ -27,6 +29,9 @@ func sshConnect(host string, port int, user string, password []byte, knownHostKe
 					return fmt.Errorf("ssh host key mismatch for %s: expected %s, got %s", hostname, knownHostKey, fingerprint)
 				}
 				return nil
+			}
+			if strictCheck {
+				return fmt.Errorf("ssh host key not configured for %s (fingerprint: %s)", hostname, fingerprint)
 			}
 			log.Printf("[executor] WARN: no known host key configured for %s, accepting fingerprint %s", hostname, fingerprint)
 			return nil
@@ -84,6 +89,18 @@ func sshExecWithInput(client *ssh.Client, cmd string, input io.Reader, timeout t
 }
 
 func sshUploadFileBase64(client *ssh.Client, localPath string, remotePath string, timeout time.Duration) (string, error) {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return "", err
+	}
+	const maxUploadSize = 500 << 20
+	if info.Size() > maxUploadSize {
+		return "", fmt.Errorf("file size %d exceeds limit %d", info.Size(), maxUploadSize)
+	}
+	cleanPath := filepath.Clean(localPath)
+	if cleanPath != localPath {
+		return "", fmt.Errorf("invalid file path")
+	}
 	file, err := os.Open(localPath)
 	if err != nil {
 		return "", err

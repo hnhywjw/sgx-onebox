@@ -36,7 +36,7 @@ func tryJoinNode(client *ssh.Client, node *domain.ClusterNode, timeout time.Dura
 		node.LastJoinMessage = "JoinCommand 必须以 'k3s' 开头"
 		return false
 	}
-	if strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") || strings.Contains(cmd, ";") || strings.Contains(cmd, "`") || strings.Contains(cmd, "$(") {
+	if strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") || strings.Contains(cmd, ";") || strings.Contains(cmd, "`") || strings.Contains(cmd, "$(") || strings.Contains(cmd, ">") || strings.Contains(cmd, "<") || strings.Contains(cmd, "|") || strings.Contains(cmd, "&") {
 		node.JoinStatus = "failed"
 		node.LastJoinMessage = "JoinCommand 包含不允许的 shell 控制字符"
 		return false

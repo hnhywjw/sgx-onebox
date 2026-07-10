@@ -66,14 +66,16 @@ func (e *Executor) withSSHNode(role string, fn func(*ssh.Client, *domain.Cluster
 			lastResult = "等待真实执行器连接"
 			continue
 		}
-		result, fnErr := fn(client, node)
-		client.Close()
+		out, fnErr := func() (string, error) {
+			defer client.Close()
+			return fn(client, node)
+		}()
 		if fnErr != nil {
 			logWarn(fmt.Sprintf("operation on %s failed: %v", node.Name, fnErr))
-			lastResult = result
+			lastResult = out
 			continue
 		}
-		return true, result
+		return true, out
 	}
 	return false, lastResult
 }
@@ -761,18 +763,19 @@ func (e *Executor) ExecuteImageBuild(req domain.ImageBuildRequest) (bool, string
 			sshExec(client, "rm -rf "+shellQuote(buildDir), e.sshTimeout)
 			return fmt.Sprintf("解压构建包失败: %s", strings.TrimSpace(decodeOut)), decodeErr
 		}
+		defer func() {
+			sshExec(client, "rm -rf "+shellQuote(buildDir), e.sshTimeout)
+		}()
 
 		buildLine := fmt.Sprintf("docker build -t %s -f %s ", shellQuote(imageName), shellQuote(dockerfile))
 		if req.EnableSGXRuntime {
 			buildLine += "--build-arg SGX_RUNTIME=1 "
 		}
 		if buildArgs := strings.TrimSpace(req.BuildArgs); buildArgs != "" {
-			buildLine += shellQuote(buildArgs) + " "
+			buildLine += " " + buildArgs
 		}
-		buildLine += fmt.Sprintf("%s 2>&1", shellQuote(buildDir))
+		buildLine += fmt.Sprintf(" %s 2>&1", shellQuote(buildDir))
 		buildOut, buildErr := sshExec(client, buildLine, e.sshTimeout*120)
-
-		sshExec(client, "rm -rf "+shellQuote(buildDir), e.sshTimeout)
 
 		if buildErr != nil {
 			return fmt.Sprintf("Docker 镜像构建失败: %s", strings.TrimSpace(buildOut)), buildErr

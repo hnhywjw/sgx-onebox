@@ -15,7 +15,9 @@ import (
 	"html"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/monkeycode-ai/sgx-onebox-platform/internal/domain"
 	"github.com/monkeycode-ai/sgx-onebox-platform/internal/executor"
@@ -30,6 +33,8 @@ import (
 	"github.com/monkeycode-ai/sgx-onebox-platform/internal/security"
 	"github.com/monkeycode-ai/sgx-onebox-platform/internal/store"
 )
+
+var ErrAccountLocked = errors.New("账号已锁定")
 
 type session struct {
 	Token       string
@@ -57,6 +62,7 @@ func NewPlatformService(dataStore store.Store) *PlatformService {
 		stopCh:   make(chan struct{}),
 	}
 	snapshot := dataStore.Snapshot()
+	svc.sessionM.Lock()
 	for _, s := range snapshot.Sessions {
 		createdAt, err := time.Parse(time.RFC3339, s.CreatedAt)
 		if err != nil {
@@ -72,6 +78,7 @@ func NewPlatformService(dataStore store.Store) *PlatformService {
 		}
 		svc.sessions[s.Token] = session{Token: s.Token, User: s.UserID, CreatedAt: createdAt, ExpiresAt: expiresAt, InitiatedAt: initiatedAt}
 	}
+	svc.sessionM.Unlock()
 
 	executorStore := &nodeStoreAdapter{svc: svc}
 	pollSec := 10
@@ -290,7 +297,8 @@ func (s *PlatformService) normalizeSnapshotCollections(snapshot store.Snapshot) 
 	for index := range snapshot.ClusterNodes {
 		snapshot.ClusterNodes[index].SSHPassword = ""
 		snapshot.ClusterNodes[index].SSHPasswordCiphertext = ""
-		snapshot.ClusterNodes[index].SSHPasswordConfigured = snapshot.ClusterNodes[index].SSHPasswordConfigured || snapshot.ClusterNodes[index].SSHHost != "" && snapshot.ClusterNodes[index].SSHUsername != ""
+		snapshot.ClusterNodes[index].SSHPasswordCiphertext = ""
+		snapshot.ClusterNodes[index].SSHPasswordConfigured = snapshot.ClusterNodes[index].SSHPasswordConfigured || (snapshot.ClusterNodes[index].SSHHost != "" && snapshot.ClusterNodes[index].SSHUsername != "" && !snapshot.ClusterNodes[index].SSHPasswordConfigured)
 	}
 	snapshot.LoginFailures = nil
 	snapshot.LoginLockedUntil = nil
@@ -424,90 +432,74 @@ func (s *PlatformService) Health() error {
 }
 
 func (s *PlatformService) Login(payload domain.LoginRequest) (domain.LoginResponse, error) {
-	snapshot := s.store.Snapshot()
 	username := strings.TrimSpace(payload.Username)
-
 	if username == "" || strings.TrimSpace(payload.Password) == "" {
 		return domain.LoginResponse{}, errors.New("用户名和密码不能为空")
 	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	snapshot := s.store.Snapshot()
 
 	if lockStr, locked := snapshot.LoginLockedUntil[username]; locked {
 		lockTime, parseErr := time.Parse(time.RFC3339, lockStr)
 		if parseErr == nil && time.Now().UTC().Before(lockTime) {
 			remaining := lockTime.Sub(time.Now().UTC()).Round(time.Second)
-			return domain.LoginResponse{}, fmt.Errorf("账号已锁定，请在 %v 后重试", remaining)
+			return domain.LoginResponse{}, fmt.Errorf("%w 请在 %v 后重试", ErrAccountLocked, remaining)
 		}
 	}
 
-	var matchedUser *domain.User
-	for index, user := range snapshot.Users {
+	var matchedIdx int = -1
+	for i, user := range snapshot.Users {
 		if user.Username == username && security.VerifyPassword(user.PasswordHash, payload.Password) {
-			u := snapshot.Users[index]
-			matchedUser = &u
+			if user.Status != domain.UserActive {
+				matchedIdx = -1
+				break
+			}
+			matchedIdx = i
 			break
 		}
 	}
 
-	if matchedUser == nil {
+	if matchedIdx < 0 {
 		_ = security.VerifyPassword("$2a$12$dummyDummyDummyDummyDummyDummyDummyDummyDummyDummy", payload.Password)
-		s.writeMu.Lock()
-		defer s.writeMu.Unlock()
-		postSnapshot := s.store.Snapshot()
-		if postSnapshot.LoginFailures == nil {
-			postSnapshot.LoginFailures = map[string]int{}
+		if snapshot.LoginFailures == nil {
+			snapshot.LoginFailures = map[string]int{}
 		}
-		if postSnapshot.LoginLockedUntil == nil {
-			postSnapshot.LoginLockedUntil = map[string]string{}
+		if snapshot.LoginLockedUntil == nil {
+			snapshot.LoginLockedUntil = map[string]string{}
 		}
-		postSnapshot.LoginFailures[username] = postSnapshot.LoginFailures[username] + 1
-		if postSnapshot.LoginFailures[username] >= 5 {
-			postSnapshot.LoginLockedUntil[username] = time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
-			postSnapshot.AuditEvents = appendAuditEvent(postSnapshot.AuditEvents, username, "login-locked", username, fmt.Sprintf("连续%d次失败", postSnapshot.LoginFailures[username]))
+		snapshot.LoginFailures[username] = snapshot.LoginFailures[username] + 1
+		if snapshot.LoginFailures[username] >= 5 {
+			snapshot.LoginLockedUntil[username] = time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339)
+			snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, username, "login-locked", username, fmt.Sprintf("连续%d次失败", snapshot.LoginFailures[username]))
 		} else {
-			postSnapshot.AuditEvents = appendAuditEvent(postSnapshot.AuditEvents, username, "login-failed", username, fmt.Sprintf("第%d次失败", postSnapshot.LoginFailures[username]))
+			snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, username, "login-failed", username, fmt.Sprintf("第%d次失败", snapshot.LoginFailures[username]))
 		}
-		if err := s.store.Replace(postSnapshot); err != nil {
+		if err := s.store.Replace(snapshot); err != nil {
 			log.Printf("[security] ERROR: 登录失败计数器持久化失败: %v", err)
 			return domain.LoginResponse{}, fmt.Errorf("系统暂时不可用，请稍后重试: %w", err)
 		}
 		return domain.LoginResponse{}, errors.New("用户名或密码错误")
 	}
 
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	postSnapshot := s.store.Snapshot()
-	found := false
-	for index, user := range postSnapshot.Users {
-		if user.ID == matchedUser.ID {
-		if user.PasswordHash != matchedUser.PasswordHash {
-			return domain.LoginResponse{}, errors.New("用户名或密码错误")
-		}
-		if user.Status != domain.UserActive {
-			return domain.LoginResponse{}, errors.New("用户名或密码错误")
-		}
-			delete(postSnapshot.LoginLockedUntil, username)
-			delete(postSnapshot.LoginFailures, username)
-			postSnapshot.Users[index].LastLoginAt = time.Now().UTC().Format(time.RFC3339)
-			found = true
-			break
-		}
-	}
-	if !found {
-		return domain.LoginResponse{}, errors.New("用户名或密码错误")
-	}
+	authenticatedUser := snapshot.Users[matchedIdx]
+	delete(snapshot.LoginLockedUntil, username)
+	delete(snapshot.LoginFailures, username)
+	snapshot.Users[matchedIdx].LastLoginAt = time.Now().UTC().Format(time.RFC3339)
 
-	postSnapshot.AuditEvents = appendAuditEvent(postSnapshot.AuditEvents, username, "login", matchedUser.ID, "success")
+	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, username, "login", authenticatedUser.ID, "success")
 	sessionTTL := s.getSessionTimeout()
 	now := time.Now().UTC()
-	token := security.GenerateToken(matchedUser.ID)
+	token := security.GenerateToken(authenticatedUser.ID)
 	s.sessionM.Lock()
-	s.sessions[token] = session{Token: token, User: matchedUser.ID, CreatedAt: now, ExpiresAt: now.Add(sessionTTL), InitiatedAt: now}
+	s.sessions[token] = session{Token: token, User: authenticatedUser.ID, CreatedAt: now, ExpiresAt: now.Add(sessionTTL), InitiatedAt: now}
 	s.sessionM.Unlock()
-	s.applySessionsToSnapshot(&postSnapshot)
-	if err := s.store.Replace(postSnapshot); err != nil {
+	s.applySessionsToSnapshot(&snapshot)
+	if err := s.store.Replace(snapshot); err != nil {
 		return domain.LoginResponse{}, err
 	}
-	return domain.LoginResponse{Token: token, User: toUserView(*matchedUser)}, nil
+	return domain.LoginResponse{Token: token, User: toUserView(authenticatedUser)}, nil
 }
 
 func (s *PlatformService) Logout(token string) {
@@ -847,6 +839,9 @@ func (s *PlatformService) SaveUser(payload domain.UserPayload, actor string) (do
 }
 
 func (s *PlatformService) DeleteUser(id string, actor string) error {
+	if strings.EqualFold(id, actor) {
+		return errors.New("不能删除当前登录账号")
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	snapshot := s.store.Snapshot()
@@ -997,6 +992,11 @@ func (s *PlatformService) BuildImage(request domain.ImageBuildRequest) (domain.I
 }
 
 func (s *PlatformService) runImageBuild(image domain.ImageAsset, request domain.ImageBuildRequest) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[image-build] panic recovered: %v", r)
+		}
+	}()
 	execOK, execMsg := s.executor.ExecuteImageBuild(request)
 	imageID := image.ID
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1129,6 +1129,9 @@ func (s *PlatformService) SaveInstallPackage(pkg domain.InstallPackage) error {
 	}
 	if strings.TrimSpace(pkg.FilePath) == "" {
 		return errors.New("安装包文件路径不能为空")
+	}
+	if strings.Contains(pkg.FilePath, "../") || strings.Contains(pkg.FilePath, "..\\") {
+		return errors.New("安装包文件路径包含非法字符")
 	}
 	fileInfo, statErr := os.Stat(pkg.FilePath)
 	if statErr != nil || fileInfo.IsDir() {
@@ -1712,12 +1715,14 @@ func (s *PlatformService) SaveClusterNode(node domain.ClusterNode) error {
 		node.SSHPasswordCiphertext = snapshot.ClusterNodes[foundIndex].SSHPasswordCiphertext
 		node.SSHPasswordConfigured = snapshot.ClusterNodes[foundIndex].SSHPasswordConfigured
 	} else {
-		ciphertext, err := security.EncryptString(node.SSHPassword)
-		if err != nil {
-			return fmt.Errorf("目标主机密码加密失败: %w", err)
+		if node.SSHPassword != "" {
+			ciphertext, err := security.EncryptString(node.SSHPassword)
+			if err != nil {
+				return fmt.Errorf("目标主机密码加密失败: %w", err)
+			}
+			node.SSHPasswordCiphertext = ciphertext
+			node.SSHPasswordConfigured = ciphertext != ""
 		}
-		node.SSHPasswordCiphertext = ciphertext
-		node.SSHPasswordConfigured = ciphertext != ""
 	}
 	node.SSHPassword = ""
 	if node.CPUUsage < 0 {
@@ -3090,11 +3095,28 @@ func (s *PlatformService) setPluginStatus(id string, status domain.PluginStatus)
 }
 
 func (s *PlatformService) DispatchPluginHook(event string, payload map[string]string) {
-	for _, plugin := range s.ListPlugins() {
-		if plugin.Status != domain.PluginEnabled || strings.TrimSpace(plugin.Endpoint) == "" {
-			continue
+	plugins := s.ListPlugins()
+	var enabled []domain.PluginDefinition
+	for _, plugin := range plugins {
+		if plugin.Status == domain.PluginEnabled && strings.TrimSpace(plugin.Endpoint) != "" {
+			enabled = append(enabled, plugin)
 		}
+	}
+	if len(enabled) == 0 {
+		return
+	}
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
+	for _, plugin := range enabled {
+		sem <- struct{}{}
+		wg.Add(1)
 		go func(ep string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if !isSafeEndpoint(ep) {
+				log.Printf("[plugin] webhook endpoint blocked (private IP): %s", ep)
+				return
+			}
 			body, _ := json.Marshal(map[string]interface{}{"event": event, "payload": payload, "timestamp": time.Now().UTC().Format(time.RFC3339)})
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -3112,6 +3134,35 @@ func (s *PlatformService) DispatchPluginHook(event string, payload map[string]st
 			httpResp.Body.Close()
 		}(plugin.Endpoint)
 	}
+	wg.Wait()
+}
+
+func isSafeEndpoint(rawURL string) bool {
+	if !strings.Contains(rawURL, "://") {
+		rawURL = "https://" + rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip != nil {
+		return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate()
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, resolvedIP := range ips {
+		if resolvedIP.IsLoopback() || resolvedIP.IsLinkLocalUnicast() || resolvedIP.IsLinkLocalMulticast() || resolvedIP.IsPrivate() {
+			return false
+		}
+	}
+	return true
 }
 
 func buildTargetImageRef(image domain.ImageAsset, targetVersion string) string {
@@ -4002,8 +4053,13 @@ func validateSetting(id string, value string) error {
 
 func sanifyYAML(s string) string {
 	cleaned := strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
+	for _, r := range cleaned {
+		if !unicode.IsPrint(r) && r != '\t' {
+			cleaned = strings.ReplaceAll(cleaned, string(r), "")
+		}
+	}
 	if strings.ContainsAny(cleaned, ":#{}[]&*!>|%@`\"'") || strings.HasPrefix(cleaned, "- ") || cleaned == "" {
-		return "\"" + strings.ReplaceAll(cleaned, "\"", "\\\"") + "\""
+		return "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(cleaned) + "\""
 	}
 	return cleaned
 }

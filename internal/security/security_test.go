@@ -78,8 +78,8 @@ func TestGenerateToken(t *testing.T) {
 			parts++
 		}
 	}
-	if parts != 2 {
-		t.Fatalf("token should have exactly two dot separators, got %d", parts)
+	if parts != 3 {
+		t.Fatalf("token should have exactly three dot separators, got %d", parts)
 	}
 }
 

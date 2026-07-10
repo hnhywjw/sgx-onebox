@@ -98,7 +98,7 @@ func (e *Executor) pollProvisioningTasks() {
 	sem := make(chan struct{}, e.provisioningConcurrency)
 	var wg sync.WaitGroup
 	for _, task := range tasks {
-		if task.Status != domain.ProvisionPending && task.Status != domain.ProvisionRunning {
+		if task.Status != domain.ProvisionPending {
 			continue
 		}
 		node, ok := findProvisioningNode(nodes, task.NodeID)
