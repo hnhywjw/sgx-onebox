@@ -449,6 +449,7 @@ func (s *PlatformService) Login(payload domain.LoginRequest) (domain.LoginRespon
 	}
 
 	if matchedUser == nil {
+		_ = security.VerifyPassword("$2a$12$dummyDummyDummyDummyDummyDummyDummyDummyDummyDummy", payload.Password)
 		s.writeMu.Lock()
 		defer s.writeMu.Unlock()
 		postSnapshot := s.store.Snapshot()
@@ -561,26 +562,27 @@ func (s *PlatformService) CurrentUser(token string) (domain.UserView, error) {
 		s.writeMu.Unlock()
 		return domain.UserView{}, errors.New("登录状态已失效")
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	snapshot := s.store.Snapshot()
 	for _, user := range snapshot.Users {
 		if user.ID == sessionEntry.User {
 			if user.Status != domain.UserActive {
-				s.writeMu.Lock()
 				s.sessionM.Lock()
 				delete(s.sessions, token)
 				s.sessionM.Unlock()
 				s.writeSessionsToSnapshot()
-				s.writeMu.Unlock()
 				return domain.UserView{}, errors.New("用户已被禁用")
 			}
-			s.writeMu.Lock()
-			s.sessionM.Lock()
 			sessionTTL := s.getSessionTimeout()
+			s.sessionM.Lock()
 			sessionEntry.ExpiresAt = now.Add(sessionTTL)
 			s.sessions[token] = sessionEntry
 			s.sessionM.Unlock()
-			s.writeSessionsToSnapshot()
-			s.writeMu.Unlock()
+			s.applySessionsToSnapshot(&snapshot)
+			if err := s.store.Replace(snapshot); err != nil {
+				return domain.UserView{}, err
+			}
 			return toUserView(user), nil
 		}
 	}
@@ -725,7 +727,7 @@ func (s *PlatformService) applySessionsToSnapshot(snapshot *store.Snapshot) {
 	sessionList := make([]domain.Session, 0, len(s.sessions))
 	for _, entry := range s.sessions {
 		sessionList = append(sessionList, domain.Session{
-			Token:       security.HashToken(entry.Token),
+			Token:       entry.Token,
 			UserID:      entry.User,
 			CreatedAt:   entry.CreatedAt.Format(time.RFC3339),
 			ExpiresAt:   entry.ExpiresAt.Format(time.RFC3339),
@@ -2410,8 +2412,8 @@ func (s *PlatformService) UpgradeCluster(request domain.ClusterUpgradeRequest) e
 		return errors.New("目标版本不能为空")
 	}
 	snapshot := s.store.Snapshot()
-	if snapshot.ClusterUpgrade.Status == "running" || snapshot.ClusterUpgrade.Status == "pending_executor" {
-		return errors.New("当前已有升级任务正在执行，请稍后再试")
+	if snapshot.ClusterUpgrade.Status != "idle" {
+		return errors.New("当前已有升级相关任务正在执行，请稍后再试")
 	}
 	currentVersion := "-"
 	if len(snapshot.ClusterNodes) > 0 {
@@ -2455,8 +2457,8 @@ func (s *PlatformService) DownloadClusterUpgrade(request domain.ClusterUpgradeRe
 		return errors.New("目标版本不能为空")
 	}
 	snapshot := s.store.Snapshot()
-	if snapshot.ClusterUpgrade.Status == "running" || snapshot.ClusterUpgrade.Status == "pending_executor" {
-		return errors.New("当前已有升级任务正在执行，请稍后再试")
+	if snapshot.ClusterUpgrade.Status != "idle" {
+		return errors.New("当前已有升级相关任务正在执行，请稍后再试")
 	}
 	currentVersion := "-"
 	if len(snapshot.ClusterNodes) > 0 {
@@ -3999,5 +4001,9 @@ func validateSetting(id string, value string) error {
 }
 
 func sanifyYAML(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
+	cleaned := strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
+	if strings.ContainsAny(cleaned, ":#{}[]&*!>|%@`\"'") || strings.HasPrefix(cleaned, "- ") || cleaned == "" {
+		return "\"" + strings.ReplaceAll(cleaned, "\"", "\\\"") + "\""
+	}
+	return cleaned
 }

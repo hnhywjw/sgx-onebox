@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/monkeycode-ai/sgx-onebox-platform/internal/domain"
 	"github.com/monkeycode-ai/sgx-onebox-platform/internal/store"
 )
+
+func init() {
+	os.Setenv("GO_TEST_MODE", "1")
+}
 
 func TestHealthEndpoint(t *testing.T) {
 	server := NewServer()

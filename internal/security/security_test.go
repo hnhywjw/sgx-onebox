@@ -1,8 +1,13 @@
 package security
 
 import (
+	"os"
 	"testing"
 )
+
+func init() {
+	os.Setenv("GO_TEST_MODE", "1")
+}
 
 func TestHashPassword(t *testing.T) {
 	pw := "test-password-123"

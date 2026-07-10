@@ -50,3 +50,12 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 前端生产构建使用 `npm run build:web`
   - 前端 smoke 验证需先有 `apps/web/dist/index.html`，再运行 `SMOKE_BASE_URL=http://localhost:8080 npm run smoke:e2e --workspace apps/web`
   - 浏览器逐按钮 E2E 验证使用 `E2E_BASE_URL=http://localhost:8080 npm run button:e2e --workspace apps/web`
+
+推送目标分支为 main
+- Date: 2026-07-02
+- Context: 用户明确指示后续提交推送到 main 分支
+- Category: 工作流协作
+- Instructions:
+  - git push 目标为 origin main
+  - 本地分支名和 GitHub 默认分支均为 main
+  - 不要在 master 分支上工作

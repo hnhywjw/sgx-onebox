@@ -151,13 +151,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
 	user, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator)
 	if err != nil {
 		writeAuthError(w, err)
-		return
-	}
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<30)
@@ -369,7 +369,7 @@ func (s *Server) handleCaptcha(w http.ResponseWriter, r *http.Request) {
 }
 
 func captchaImageData(answer string) string {
-	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="42" viewBox="0 0 120 42"><rect width="120" height="42" rx="8" fill="#eff6ff"/><path d="M8 14 C28 3,40 38,63 18 S93 6,112 28" fill="none" stroke="#93c5fd" stroke-width="2"/><path d="M10 31 C34 18,54 45,78 23 S98 12,115 18" fill="none" stroke="#bfdbfe" stroke-width="2"/><text x="60" y="28" text-anchor="middle" font-family="monospace" font-size="24" font-weight="700" letter-spacing="6" fill="#1d4ed8">%s</text></svg>`, answer)
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="50" viewBox="0 0 160 50"><rect width="160" height="50" rx="8" fill="#eff6ff"/><path d="M5 15 C25 5,45 25,65 10 S100 35,120 20 S155 5,160 10" fill="none" stroke="#93c5fd" stroke-width="1.5" opacity="0.7"/><path d="M8 35 C30 20,50 45,75 25 S100 15,125 30 S145 18,160 25" fill="none" stroke="#bfdbfe" stroke-width="1.5" opacity="0.7"/><text x="40" y="30" transform="rotate(-8 40 30)" text-anchor="middle" font-family="monospace" font-size="22" font-weight="700" fill="#1d4ed8" opacity="0.85">%c</text><text x="80" y="32" transform="rotate(5 80 32)" text-anchor="middle" font-family="monospace" font-size="24" font-weight="700" fill="#1e40af" opacity="0.9">%c</text><text x="120" y="28" transform="rotate(-5 120 28)" text-anchor="middle" font-family="monospace" font-size="22" font-weight="700" fill="#2563eb" opacity="0.85">%c</text><text x="140" y="34" transform="rotate(12 140 34)" text-anchor="middle" font-family="monospace" font-size="20" font-weight="700" fill="#1d4ed8" opacity="0.9">%c</text></svg>`, answer[0], answer[1], answer[2], answer[3])
 	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 }
 
@@ -2565,6 +2565,9 @@ func sameOriginRequest(r *http.Request) bool {
 }
 
 func isTrustedOriginReferrer(rawURL string) bool {
+	if !strings.Contains(rawURL, "://") {
+		rawURL = "https://" + rawURL
+	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return false
@@ -2615,12 +2618,14 @@ func isSecureRequest(r *http.Request) bool {
 	if proto == "" {
 		return false
 	}
-	host := r.Host
-	if colon := strings.LastIndex(host, ":"); colon >= 0 {
-		host = host[:colon]
-	}
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return proto == "https"
+	if proto == "https" {
+		host := r.Host
+		if colon := strings.LastIndex(host, ":"); colon >= 0 {
+			host = host[:colon]
+		}
+		if isTrustedOriginReferrer(host) {
+			return true
+		}
 	}
 	return false
 }
@@ -2645,7 +2650,7 @@ func withCORS(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
-		if r.TLS != nil {
+		if isSecureRequest(r) {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		if r.Method == http.MethodOptions {
@@ -2838,11 +2843,13 @@ func writeMethodNotAllowed(w http.ResponseWriter) {
 }
 
 func clientIP(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		return strings.TrimSpace(parts[0])
-	}
 	host, _, _ := strings.Cut(r.RemoteAddr, ":")
+	if isTrustedOriginReferrer(r.Host) {
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			parts := strings.Split(forwarded, ",")
+			return strings.TrimSpace(parts[0])
+		}
+	}
 	return host
 }
 

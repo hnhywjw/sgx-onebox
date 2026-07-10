@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ type Executor struct {
 	cancel                  context.CancelFunc
 	mu                      sync.Mutex
 	stopCh                  chan struct{}
+	stopOnce                sync.Once
 }
 
 type Config struct {
@@ -88,10 +90,12 @@ func (e *Executor) Start(ctx context.Context) {
 }
 
 func (e *Executor) Stop() {
-	close(e.stopCh)
-	if e.cancel != nil {
-		e.cancel()
-	}
+	e.stopOnce.Do(func() {
+		close(e.stopCh)
+		if e.cancel != nil {
+			e.cancel()
+		}
+	})
 }
 
 func (e *Executor) pollOnce() {
@@ -130,6 +134,11 @@ func (e *Executor) pollOnce() {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[executor] panic in pollOnce worker %d: %v", idx, r)
+				}
+			}()
 			node := nodes[idx]
 			result := e.collectAndJoin(node, now)
 			results[idx] = result

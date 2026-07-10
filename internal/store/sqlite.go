@@ -40,6 +40,8 @@ func NewSQLiteStore() (*SQLiteStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.Exec("PRAGMA journal_mode=WAL")
+	db.Exec("PRAGMA busy_timeout=5000")
 	store := &SQLiteStore{db: db}
 	if err := store.initSchema(); err != nil {
 		db.Close()
