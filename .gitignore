@@ -13,3 +13,5 @@ runtime-bundles/linux-amd64/crictl
 runtime-bundles/linux-amd64/ctr
 runtime-bundles/linux-amd64/k3s
 runtime-bundles/linux-amd64/kubectl
+release/
+sgx-onebox
