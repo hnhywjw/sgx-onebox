@@ -781,7 +781,8 @@ func (s *Server) handleComponentByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "upgrade" {
-		if _, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator); err != nil {
+		user, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator)
+		if err != nil {
 			writeAuthError(w, err)
 			return
 		}
@@ -795,7 +796,7 @@ func (s *Server) handleComponentByID(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &payload) {
 			return
 		}
-		if err := s.service.UpgradeComponent(id, payload.Version); err != nil {
+		if err := s.service.UpgradeComponent(id, payload.Version, user.Username); err != nil {
 			writeServiceError(w, err)
 			return
 		}

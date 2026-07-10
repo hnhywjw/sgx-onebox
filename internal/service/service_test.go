@@ -201,7 +201,7 @@ func TestUpgradeComponentWithoutExecutorStaysPendingAndKeepsVersion(t *testing.T
 			break
 		}
 	}
-	if err := svc.UpgradeComponent("cmp-key", "9.9.9"); err != nil {
+	if err := svc.UpgradeComponent("cmp-key", "9.9.9", "admin"); err != nil {
 		t.Fatalf("UpgradeComponent: %v", err)
 	}
 	snapshot := svc.Snapshot()

@@ -2835,17 +2835,24 @@ func (s *PlatformService) DeleteComponent(id string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	snapshot := s.store.Snapshot()
-	updated := make([]domain.ComponentDefinition, 0, len(snapshot.Components))
-	found := false
-	for _, item := range snapshot.Components {
-		if item.ID == id {
-			found = true
-			continue
+	var target *domain.ComponentDefinition
+	for i := range snapshot.Components {
+		if snapshot.Components[i].ID == id {
+			target = &snapshot.Components[i]
+			break
 		}
-		updated = append(updated, item)
 	}
-	if !found {
+	if target == nil {
 		return store.ErrNotFound
+	}
+	if target.Status == domain.ComponentDeployed || target.Status == domain.ComponentDeploying {
+		return errors.New("已部署或正在部署的组件暂时无法删除")
+	}
+	updated := make([]domain.ComponentDefinition, 0, len(snapshot.Components))
+	for _, item := range snapshot.Components {
+		if item.ID != id {
+			updated = append(updated, item)
+		}
 	}
 	snapshot.Components = updated
 	filteredEnclaves := make([]domain.EnclaveProfile, 0, len(snapshot.Enclaves))
@@ -2959,7 +2966,7 @@ func (s *PlatformService) ScaleComponent(id string, replicas int, actor string) 
 	return store.ErrNotFound
 }
 
-func (s *PlatformService) UpgradeComponent(id string, targetVersion string) error {
+func (s *PlatformService) UpgradeComponent(id string, targetVersion string, actor string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if strings.TrimSpace(targetVersion) == "" {
@@ -2979,12 +2986,12 @@ func (s *PlatformService) UpgradeComponent(id string, targetVersion string) erro
 				snapshot.Components[index].Version = targetVersion
 				snapshot.Components[index].Status = domain.ComponentDeployed
 				snapshot.ClusterLogs = append([]domain.ClusterLog{{ID: "log-upgrade-component-" + item.ID + "-" + fmt.Sprintf("%d", time.Now().UTC().UnixNano()), NodeID: "cluster", Category: "deployment", Level: "info", Message: execMsg, RecordedAt: now}}, snapshot.ClusterLogs...)
-				snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "upgrade-component", id, "success")
+				snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, actor, "upgrade-component", id, "success")
 			} else {
 				snapshot.Components[index].Status = domain.ComponentDeploying
 				snapshot.ClusterAlerts = append([]domain.ClusterAlert{{ID: "alert-upgrade-component-pending-" + item.ID + "-" + fmt.Sprintf("%d", time.Now().UTC().UnixNano()), Level: "warning", Source: item.Name, Message: execMsg, Status: "open", CreatedAt: now}}, snapshot.ClusterAlerts...)
 				snapshot.ClusterLogs = append([]domain.ClusterLog{{ID: "log-upgrade-component-pending-" + item.ID + "-" + fmt.Sprintf("%d", time.Now().UTC().UnixNano()), NodeID: "cluster", Category: "deployment", Level: "warning", Message: execMsg, RecordedAt: now}}, snapshot.ClusterLogs...)
-				snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "upgrade-component", id, "pending-executor")
+				snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, actor, "upgrade-component", id, "pending-executor")
 			}
 			return s.persistWithReport(snapshot)
 		}
