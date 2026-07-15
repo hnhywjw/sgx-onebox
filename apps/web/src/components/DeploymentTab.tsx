@@ -38,7 +38,7 @@ function isValidPort(value: number): boolean {
 
 function toClusterNodePayload(node: typeof initialNode): ClusterNode {
   return {
-    status: 'credential_ready', kernel: '', arch: '', containerRuntime: '', runtimeClass: '', capacityCpu: '', capacityMemory: '', diskCapacity: '', labels: [], taints: [], cpuUsage: 0, memoryUsage: 0, diskUsage: 0, podCount: 0, lastHeartbeat: '', joinedAt: '', joinMode: 'ssh', joinStatus: 'credential_ready', joinCommand: '', lastJoinAttemptAt: '', lastJoinMessage: '', provisionStatus: 'pending', provisionTaskId: '', sgxStatus: node.enableSgx ? 'pending' : 'unknown', runtimeStatus: node.autoProvision ? 'pending' : 'unknown', sshPasswordCiphertext: '', sshPasswordConfigured: Boolean(node.sshPassword), rxBytes: 0, txBytes: 0, nicName: 'eth0', rxRate: 0, txRate: 0,
+    status: 'credential_ready', kernel: '', arch: '', containerRuntime: '', runtimeClass: '', capacityCpu: '', capacityMemory: '', diskCapacity: '', labels: [], taints: [], cpuUsage: 0, memoryUsage: 0, diskUsage: 0, podCount: 0, lastHeartbeat: '', joinedAt: '', joinMode: 'ssh', joinStatus: 'credential_ready', joinCommand: '', lastJoinAttemptAt: '', lastJoinMessage: '', provisionStatus: 'pending', provisionTaskId: '',     sgxStatus: node.enableSgx ? 'sgx_pending' : 'unknown', runtimeStatus: node.autoProvision ? 'runtime_pending' : 'unknown', sshPasswordCiphertext: '', sshPasswordConfigured: Boolean(node.sshPassword), rxBytes: 0, txBytes: 0, nicName: 'eth0', rxRate: 0, txRate: 0,
     ...node,
     role: node.k3sRole,
     k3sRole: node.k3sRole,

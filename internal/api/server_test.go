@@ -722,8 +722,8 @@ func TestSecurityAdminRolePermissions(t *testing.T) {
 	})
 	t.Run("can read cluster nodes", func(t *testing.T) {
 		resp := authedGet(t, server, "/api/v1/cluster/nodes", token)
-		if resp.Code != http.StatusForbidden {
-			t.Fatalf("cluster nodes: expected 403 Forbidden, got %d", resp.Code)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("cluster nodes: expected 200 OK, got %d", resp.Code)
 		}
 	})
 	t.Run("can read plugins", func(t *testing.T) {
@@ -795,8 +795,8 @@ func TestOperatorRolePermissions(t *testing.T) {
 	})
 	t.Run("can read cluster nodes", func(t *testing.T) {
 		resp := authedGet(t, server, "/api/v1/cluster/nodes", token)
-		if resp.Code != http.StatusForbidden {
-			t.Fatalf("cluster nodes: expected 403 Forbidden, got %d", resp.Code)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("cluster nodes: expected 200 OK, got %d", resp.Code)
 		}
 	})
 	t.Run("can read plugins", func(t *testing.T) {
@@ -816,8 +816,8 @@ func TestOperatorRolePermissions(t *testing.T) {
 			"name": "op-test-node", "role": "worker", "internalIp": "10.255.0.99",
 			"sshHost": "10.255.0.99", "sshPort": 22, "sshUsername": "ubuntu", "sshPassword": "test12345",
 		}, token)
-		if resp.Code != http.StatusForbidden {
-			t.Fatalf("create node: expected 403 Forbidden, got %d: %s", resp.Code, resp.Body.String())
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("create node: expected 201 Created, got %d: %s", resp.Code, resp.Body.String())
 		}
 	})
 	t.Run("can delete cluster node", func(t *testing.T) {
@@ -830,8 +830,8 @@ func TestOperatorRolePermissions(t *testing.T) {
 				req.Header.Set("Authorization", "Bearer "+token)
 				resp := httptest.NewRecorder()
 				server.Routes().ServeHTTP(resp, req)
-				if resp.Code != http.StatusForbidden {
-					t.Fatalf("delete node: expected 403 Forbidden, got %d: %s", resp.Code, resp.Body.String())
+				if resp.Code != http.StatusOK {
+					t.Fatalf("delete node: expected 200 OK, got %d: %s", resp.Code, resp.Body.String())
 				}
 				return
 			}

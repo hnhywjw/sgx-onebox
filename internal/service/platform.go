@@ -844,24 +844,33 @@ func (s *PlatformService) DeleteUser(id string, actor string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	snapshot := s.store.Snapshot()
+	var deletedUser *domain.User
+	platformAdminCount := 0
+	for i := range snapshot.Users {
+		if snapshot.Users[i].Role == domain.RolePlatformAdmin {
+			platformAdminCount++
+		}
+		if snapshot.Users[i].ID == id {
+			deletedUser = &snapshot.Users[i]
+		}
+	}
+	if deletedUser == nil {
+		return store.ErrNotFound
+	}
+	if deletedUser.Role == domain.RolePlatformAdmin && platformAdminCount <= 1 {
+		return errors.New("不能删除最后一位平台管理员")
+	}
 	updated := make([]domain.User, 0, len(snapshot.Users))
-	found := false
-	var deletedUsername string
 	for _, user := range snapshot.Users {
 		if user.ID == id {
-			found = true
-			deletedUsername = user.Username
 			continue
 		}
 		updated = append(updated, user)
 	}
-	if !found {
-		return store.ErrNotFound
-	}
 	snapshot.Users = updated
 	s.revokeUserSessions(id)
 	s.applySessionsToSnapshot(&snapshot)
-	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, actor, "delete-user", deletedUsername, "success")
+	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, actor, "delete-user", deletedUser.Username, "success")
 	return s.persistWithReport(snapshot)
 }
 
@@ -2271,10 +2280,15 @@ func (s *PlatformService) actorName(actor string) string {
 	return actorOrPlatform(actor)
 }
 
-func (s *PlatformService) DeleteClusterNode(id string) error {
+func (s *PlatformService) DeleteClusterNode(id string, actor string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	snapshot := s.store.Snapshot()
+	for _, comp := range snapshot.Components {
+		if comp.Status == domain.ComponentDeployed || comp.Status == domain.ComponentDeploying {
+			return errors.New("存在部署中或已部署的组件，无法删除节点")
+		}
+	}
 	updated := make([]domain.ClusterNode, 0, len(snapshot.ClusterNodes))
 	found := false
 	for _, item := range snapshot.ClusterNodes {
@@ -2316,7 +2330,7 @@ func (s *PlatformService) DeleteClusterNode(id string) error {
 		}
 	}
 	snapshot.ClusterLogs = cleanLogs
-	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "delete-cluster-node", id, "success")
+	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, s.actorName(actor), "delete-cluster-node", id, "success")
 	return s.persistWithReport(snapshot)
 }
 
@@ -2831,7 +2845,7 @@ func (s *PlatformService) DeleteSystemSetting(id string) error {
 	return s.persistWithReport(snapshot)
 }
 
-func (s *PlatformService) DeleteComponent(id string) error {
+func (s *PlatformService) DeleteComponent(id string, actor string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	snapshot := s.store.Snapshot()
@@ -2879,7 +2893,14 @@ func (s *PlatformService) DeleteComponent(id string) error {
 	for index := range snapshot.Networks {
 		snapshot.Networks[index].AttachedComponents = removeString(snapshot.Networks[index].AttachedComponents, id)
 	}
-	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "delete-component", id, "success")
+	cleanLinks := make([]domain.TopologyLink, 0, len(snapshot.TopoLinks))
+	for _, link := range snapshot.TopoLinks {
+		if link.Source != id && link.Target != id {
+			cleanLinks = append(cleanLinks, link)
+		}
+	}
+	snapshot.TopoLinks = cleanLinks
+	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, s.actorName(actor), "delete-component", id, "success")
 	return s.persistWithReport(snapshot)
 }
 

@@ -832,11 +832,12 @@ func (s *Server) handleComponentByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, payload)
 	case http.MethodDelete:
-		if _, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator); err != nil {
+		actor, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator)
+		if err != nil {
 			writeAuthError(w, err)
 			return
 		}
-		if err := s.service.DeleteComponent(id); err != nil {
+		if err := s.service.DeleteComponent(id, actor.Username); err != nil {
 			writeServiceError(w, err)
 			return
 		}
@@ -1442,7 +1443,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireRoles(r, domain.RolePlatformAdmin); err != nil {
+	if _, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator, domain.RoleAuditor); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -1504,7 +1505,7 @@ func (s *Server) handleClusterNodeByID(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if _, err := s.requireRoles(r, domain.RolePlatformAdmin); err != nil {
+		if _, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator, domain.RoleAuditor); err != nil {
 			writeAuthError(w, err)
 			return
 		}
@@ -1531,11 +1532,12 @@ func (s *Server) handleClusterNodeByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeClusterNodeResponse(w, http.StatusOK, s.service.Snapshot(), id, payload.Name)
 	case http.MethodDelete:
-		if _, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator); err != nil {
+		actor, err := s.requireRoles(r, domain.RolePlatformAdmin, domain.RoleSecurityAdmin, domain.RoleOperator)
+		if err != nil {
 			writeAuthError(w, err)
 			return
 		}
-		if err := s.service.DeleteClusterNode(id); err != nil {
+		if err := s.service.DeleteClusterNode(id, actor.Username); err != nil {
 			writeServiceError(w, err)
 			return
 		}

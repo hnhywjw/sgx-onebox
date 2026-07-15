@@ -102,9 +102,14 @@ func (e *Executor) pollProvisioningTasks() {
 			if updatedAt, err := time.Parse(time.RFC3339, task.UpdatedAt); err == nil && time.Since(updatedAt) > 30*time.Minute {
 				task.Status = domain.ProvisionFailed
 				task.Message = "任务执行超时，可能因服务重启而中断"
-				task.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				task.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+				task.UpdatedAt = task.CompletedAt
 				if saveErr := e.store.SaveProvisioningTaskStatus(task); saveErr != nil {
 					logWarn(fmt.Sprintf("persist timeout recovery for provisioning task %s failed: %v", task.ID, saveErr))
+				}
+				if n, ok := findProvisioningNode(nodes, task.NodeID); ok {
+					n.ProvisionStatus = string(domain.ProvisionFailed)
+					_ = e.store.SaveClusterNodeStatus(n)
 				}
 			}
 			continue
