@@ -1499,6 +1499,12 @@ th {
 .app-shell-readonly .content .primary-button,
 .app-shell-readonly .content .danger-button {
   display: none;
+  pointer-events: none;
+}
+.app-shell-readonly .content .inline-form button[type="submit"],
+.app-shell-readonly .content form button[type="submit"] {
+  pointer-events: none;
+  opacity: 0.4;
 }
 
 @media (max-width: 720px) {

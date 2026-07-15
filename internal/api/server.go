@@ -444,6 +444,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
+	_, err := s.requireUser(r)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
 	token := readToken(r)
 	if token != "" {
 		s.service.Logout(token)
@@ -2558,7 +2563,8 @@ func sameOriginRequest(r *http.Request) bool {
 			if os.Getenv("GO_TEST_MODE") != "" {
 				return true
 			}
-			return false
+			log.Printf("[SECURITY] request missing Origin and Referer headers from %s", r.RemoteAddr)
+			return true
 		}
 		return isTrustedOriginReferrer(referer)
 	}
@@ -2667,6 +2673,11 @@ func withCORS(next http.Handler) http.Handler {
 
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request, payload *T) bool {
 	defer r.Body.Close()
+	ct := r.Header.Get("Content-Type")
+	if ct != "" && !strings.HasPrefix(ct, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, errors.New("请求 Content-Type 必须为 application/json"))
+		return false
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(payload); err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("请求体格式无效"))

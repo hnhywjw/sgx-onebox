@@ -139,6 +139,19 @@ func (e *Executor) pollProvisioningTasks() {
 }
 
 func (e *Executor) runProvisioningTask(task domain.ProvisioningTask, node domain.ClusterNode, nodes []domain.ClusterNode) {
+	defer func() {
+		if r := recover(); r != nil {
+			task.Status = domain.ProvisionFailed
+			task.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+			task.UpdatedAt = task.CompletedAt
+			task.Message = fmt.Sprintf("任务执行异常: %v", r)
+			node.ProvisionStatus = string(domain.ProvisionFailed)
+			_ = e.store.SaveClusterNodeStatus(node)
+			if saveErr := e.store.SaveProvisioningTaskStatus(task); saveErr != nil {
+				logWarn(fmt.Sprintf("persist panic recovery for provisioning task %s failed: %v", task.ID, saveErr))
+			}
+		}
+	}()
 	if latest, ok := findProvisioningTask(e.store.ListProvisioningTasks(), task.ID); ok && latest.Status == domain.ProvisionCancelled {
 		return
 	}

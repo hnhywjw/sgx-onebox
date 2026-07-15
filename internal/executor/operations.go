@@ -325,11 +325,11 @@ func (e *Executor) ExecuteUpgrade(targetVersion string) (bool, string) {
 			logWarn(fmt.Sprintf("ssh client for %s: %v", node.Name, err))
 			return false, fmt.Sprintf("控制面节点 %s 连接失败: %v", node.Name, err)
 		}
+		defer client.Close()
 		dir := k3sUpgradeWorkDir(targetVersion)
 		version := targetVersion
-		cmd := fmt.Sprintf("set -e; script=\"%s/install.sh\"; if [ -x \"$script\" ]; then INSTALL_K3S_VERSION=%s \"$script\"; else curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=%s sh -; fi", dir, version, version)
+		cmd := fmt.Sprintf("set -e; script=\"%s/install.sh\"; if [ -x \"$script\" ]; then INSTALL_K3S_VERSION='%s' \"$script\"; else curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='%s' sh -; fi", dir, version, version)
 		output, execErr := sshExec(client, cmd, e.sshTimeout*30)
-		client.Close()
 		if execErr != nil {
 			return false, fmt.Sprintf("控制面节点 %s 升级命令执行失败: %v", node.Name, execErr)
 		}
@@ -355,10 +355,10 @@ func (e *Executor) ExecuteUpgradeDownload(targetVersion string) (bool, string) {
 			logWarn(fmt.Sprintf("ssh client for %s: %v", node.Name, err))
 			return false, fmt.Sprintf("控制面节点 %s 连接失败: %v", node.Name, err)
 		}
+		defer client.Close()
 		dir := k3sUpgradeWorkDir(targetVersion)
 		cmd := fmt.Sprintf("set -e; mkdir -p \"%s\"; if command -v curl >/dev/null 2>&1; then curl -sfL https://get.k3s.io -o \"%s/install.sh\"; elif command -v wget >/dev/null 2>&1; then wget -q https://get.k3s.io -O \"%s/install.sh\"; else echo curl or wget is required; exit 127; fi; chmod +x \"%s/install.sh\"; test -s \"%s/install.sh\"", dir, dir, dir, dir, dir)
 		output, execErr := sshExec(client, cmd, e.sshTimeout*20)
-		client.Close()
 		if execErr != nil {
 			return false, fmt.Sprintf("控制面节点 %s 升级脚本下载失败: %v", node.Name, execErr)
 		}
@@ -790,8 +790,59 @@ func (e *Executor) ExecuteImageBuild(req domain.ImageBuildRequest) (bool, string
 }
 
 func isSafeBuildArgs(args string) bool {
-	for _, r := range args {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '=' || r == '_' || r == '-' || r == '.' || r == ' ' || r == ',' || r == ':' || r == '/' {
+	remain := strings.TrimSpace(args)
+	for remain != "" {
+		if !strings.HasPrefix(remain, "--build-arg ") {
+			return false
+		}
+		remain = strings.TrimPrefix(remain, "--build-arg ")
+		remain = strings.TrimLeft(remain, " ")
+		end := strings.Index(remain, " --build-arg ")
+		if end < 0 {
+			end = len(remain)
+		}
+		pair := remain[:end]
+		eq := strings.Index(pair, "=")
+		if eq < 1 {
+			return false
+		}
+		key := pair[:eq]
+		if !isSafeBuildArgKey(key) {
+			return false
+		}
+		val := pair[eq+1:]
+		if !isSafeBuildArgValue(val) {
+			return false
+		}
+		if end >= len(remain) {
+			break
+		}
+		remain = remain[end:]
+	}
+	return true
+}
+
+func isSafeBuildArgKey(key string) bool {
+	if len(key) == 0 || len(key) > 256 {
+		return false
+	}
+	for i, r := range key {
+		if i == 0 && !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r == '_') {
+			return false
+		}
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafeBuildArgValue(val string) bool {
+	if len(val) > 4096 {
+		return false
+	}
+	for _, r := range val {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' || r == '/' || r == ':' || r == ' ' || r == ',' || r == '+' || r == '=' {
 			continue
 		}
 		return false

@@ -496,7 +496,7 @@ export default function App() {
               </div>
               <div className="login-input-wrap">
                 <span className="login-input-icon">{IconLock}</span>
-                <input className="login-input" type="password" placeholder="密码，如 admin123" title="输入账号密码，默认管理员示例为 admin123" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" />
+                <input className="login-input" type="password" placeholder="密码" title="输入账号密码" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" />
               </div>
               <div className="section-head" style={{ marginTop: 2 }}>
                 <div className="inline-card" style={{ flex: 1, justifyContent: 'flex-start', gap: 10 }}>

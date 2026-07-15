@@ -2291,9 +2291,11 @@ func (s *PlatformService) DeleteClusterNode(id string, actor string) error {
 	}
 	updated := make([]domain.ClusterNode, 0, len(snapshot.ClusterNodes))
 	found := false
+	var deletedNodeName string
 	for _, item := range snapshot.ClusterNodes {
 		if item.ID == id {
 			found = true
+			deletedNodeName = item.Name
 			continue
 		}
 		updated = append(updated, item)
@@ -2318,7 +2320,7 @@ func (s *PlatformService) DeleteClusterNode(id string, actor string) error {
 	snapshot.EnclaveResources = cleanEnclaveResources
 	cleanAlerts := make([]domain.ClusterAlert, 0, len(snapshot.ClusterAlerts))
 	for _, alert := range snapshot.ClusterAlerts {
-		if alert.Source != id {
+		if alert.Source != id && alert.Source != deletedNodeName {
 			cleanAlerts = append(cleanAlerts, alert)
 		}
 	}
@@ -2900,6 +2902,13 @@ func (s *PlatformService) DeleteComponent(id string, actor string) error {
 		}
 	}
 	snapshot.TopoLinks = cleanLinks
+	cleanInspections := make([]domain.EnclaveInspection, 0, len(snapshot.EnclaveInspections))
+	for _, inspection := range snapshot.EnclaveInspections {
+		if inspection.Target != id {
+			cleanInspections = append(cleanInspections, inspection)
+		}
+	}
+	snapshot.EnclaveInspections = cleanInspections
 	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, s.actorName(actor), "delete-component", id, "success")
 	return s.persistWithReport(snapshot)
 }
@@ -3178,7 +3187,19 @@ func (s *PlatformService) DispatchPluginHook(event string, payload map[string]st
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
-			httpResp, err := http.DefaultClient.Do(req)
+			client := &http.Client{
+				Timeout: 10 * time.Second,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					if len(via) >= 5 {
+						return errors.New("too many redirects")
+					}
+					if !isSafeEndpoint(req.URL.String()) {
+						return errors.New("redirect to unsafe endpoint blocked")
+					}
+					return nil
+				},
+			}
+			httpResp, err := client.Do(req)
 			if err != nil {
 				log.Printf("[plugin] webhook dispatch failed for %s: %v", ep, err)
 				return
@@ -3206,7 +3227,7 @@ func isSafeEndpoint(rawURL string) bool {
 		if v4 := ip.To4(); v4 != nil {
 			ip = v4
 		}
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() || isSpecialUseIP(ip) {
 			return false
 		}
 		return true
@@ -3220,11 +3241,35 @@ func isSafeEndpoint(rawURL string) bool {
 		if v4 == nil {
 			v4 = resolvedIP
 		}
-		if v4.IsLoopback() || v4.IsLinkLocalUnicast() || v4.IsLinkLocalMulticast() || v4.IsPrivate() || v4.IsUnspecified() {
+		if v4.IsLoopback() || v4.IsLinkLocalUnicast() || v4.IsLinkLocalMulticast() || v4.IsPrivate() || v4.IsUnspecified() || isSpecialUseIP(v4) {
 			return false
 		}
 	}
 	return true
+}
+
+var cgnatCIDR = func() *net.IPNet {
+	_, cidr, _ := net.ParseCIDR("100.64.0.0/10")
+	return cidr
+}()
+
+func isSpecialUseIP(ip net.IP) bool {
+	if cgnatCIDR.Contains(ip) {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		for _, cidr := range []string{"192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "198.18.0.0/15"} {
+			_, net, err := net.ParseCIDR(cidr)
+			if err == nil && net.Contains(ip4) {
+				return true
+			}
+		}
+	} else {
+		if strings.HasPrefix(ip.String(), "2001:db8:") {
+			return true
+		}
+	}
+	return false
 }
 
 func buildTargetImageRef(image domain.ImageAsset, targetVersion string) string {
