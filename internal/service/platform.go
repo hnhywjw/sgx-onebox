@@ -118,7 +118,11 @@ func (a *nodeStoreAdapter) SaveClusterNodes(nodes []domain.ClusterNode) error {
 	defer a.svc.writeMu.Unlock()
 	snapshot := a.svc.store.Snapshot()
 	snapshot.ClusterNodes = nodes
-	return a.svc.store.Replace(snapshot)
+	if err := a.svc.store.Replace(snapshot); err != nil {
+		log.Printf("[executor] SaveClusterNodes persist failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func (a *nodeStoreAdapter) SaveClusterNodeStatus(node domain.ClusterNode) error {
@@ -156,7 +160,11 @@ func (a *nodeStoreAdapter) SaveClusterNodeStatus(node domain.ClusterNode) error 
 		current.RxRate = node.RxRate
 		current.TxRate = node.TxRate
 		snapshot.ClusterNodes[index] = current
-		return a.svc.store.Replace(snapshot)
+		if err := a.svc.store.Replace(snapshot); err != nil {
+			log.Printf("[executor] SaveClusterNodeStatus persist failed for %s: %v", node.ID, err)
+			return err
+		}
+		return nil
 	}
 	return store.ErrNotFound
 }
@@ -839,7 +847,7 @@ func (s *PlatformService) SaveUser(payload domain.UserPayload, actor string) (do
 
 func (s *PlatformService) DeleteUser(id string, actor string) error {
 	if strings.EqualFold(id, actor) {
-		return errors.New("不能删除当前登录账号")
+		return fmt.Errorf("%w: 不能删除当前登录账号", store.ErrConflict)
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -858,7 +866,7 @@ func (s *PlatformService) DeleteUser(id string, actor string) error {
 		return store.ErrNotFound
 	}
 	if deletedUser.Role == domain.RolePlatformAdmin && platformAdminCount <= 1 {
-		return errors.New("不能删除最后一位平台管理员")
+		return fmt.Errorf("%w: 不能删除最后一位平台管理员", store.ErrConflict)
 	}
 	updated := make([]domain.User, 0, len(snapshot.Users))
 	for _, user := range snapshot.Users {
@@ -1000,6 +1008,45 @@ func (s *PlatformService) BuildImage(request domain.ImageBuildRequest) (domain.I
 }
 
 func (s *PlatformService) runImageBuild(image domain.ImageAsset, request domain.ImageBuildRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s._runImageBuild(ctx, image, request)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+		log.Printf("[image-build] timeout for %s: %v", image.ID, ctx.Err())
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
+		snapshot := s.store.Snapshot()
+		for i := range snapshot.Images {
+			if snapshot.Images[i].ID == image.ID {
+				snapshot.Images[i].LastScanAt = time.Now().UTC().Format(time.RFC3339)
+				snapshot.Images[i].Vulnerability = "high"
+				snapshot.ClusterLogs = append([]domain.ClusterLog{{
+					ID:         fmt.Sprintf("log-build-timeout-%s-%d", image.ID, time.Now().UTC().UnixNano()),
+					NodeID:     "cluster",
+					Category:   "image",
+					Level:      "error",
+					Message:    fmt.Sprintf("镜像构建超时: %v", ctx.Err()),
+					RecordedAt: time.Now().UTC().Format(time.RFC3339),
+				}}, snapshot.ClusterLogs...)
+				snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "build-image-result", snapshot.Images[i].Name, "timeout")
+				if err := s.store.Replace(snapshot); err != nil {
+					log.Printf("[image-build] timeout persist for %s failed: %v", image.ID, err)
+				}
+				break
+			}
+		}
+	}
+}
+
+func (s *PlatformService) _runImageBuild(ctx context.Context, image domain.ImageAsset, request domain.ImageBuildRequest) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[image-build] panic recovered: %v", r)
@@ -1020,7 +1067,9 @@ func (s *PlatformService) runImageBuild(image domain.ImageAsset, request domain.
 						RecordedAt: now,
 					}}, snapshot.ClusterLogs...)
 					snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "build-image-result", snapshot.Images[i].Name, "critical-error")
-					_ = s.store.Replace(snapshot)
+					if err := s.store.Replace(snapshot); err != nil {
+						log.Printf("[image-build] panic persist for %s failed: %v", image.ID, err)
+					}
 					break
 				}
 			}
@@ -1061,7 +1110,9 @@ func (s *PlatformService) runImageBuild(image domain.ImageAsset, request domain.
 				resultLabel = "failure"
 			}
 			snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "build-image-result", snapshot.Images[i].Name, resultLabel)
-			_ = s.store.Replace(snapshot)
+			if err := s.store.Replace(snapshot); err != nil {
+				log.Printf("[image-build] persist result for %s failed: %v", imageID, err)
+			}
 			break
 		}
 	}
@@ -1073,7 +1124,7 @@ func (s *PlatformService) DeleteImage(id string) error {
 	snapshot := s.store.Snapshot()
 	for _, component := range snapshot.Components {
 		if component.Image == id {
-			return errors.New("存在关联组件，镜像暂时无法删除")
+			return fmt.Errorf("%w: 存在关联组件，镜像暂时无法删除", store.ErrConflict)
 		}
 	}
 	updated := make([]domain.ImageAsset, 0, len(snapshot.Images))
@@ -2862,7 +2913,7 @@ func (s *PlatformService) DeleteComponent(id string, actor string) error {
 		return store.ErrNotFound
 	}
 	if target.Status == domain.ComponentDeployed || target.Status == domain.ComponentDeploying {
-		return errors.New("已部署或正在部署的组件暂时无法删除")
+		return fmt.Errorf("%w: 已部署或正在部署的组件暂时无法删除", store.ErrConflict)
 	}
 	updated := make([]domain.ComponentDefinition, 0, len(snapshot.Components))
 	for _, item := range snapshot.Components {
@@ -3604,7 +3655,7 @@ func (s *PlatformService) DeleteNetwork(id string) error {
 	snapshot := s.store.Snapshot()
 	for _, component := range snapshot.Components {
 		if slices.Contains(component.NetworkAttachments, id) {
-			return errors.New("存在关联组件，网络暂时无法删除")
+			return fmt.Errorf("%w: 存在关联组件，网络暂时无法删除", store.ErrConflict)
 		}
 	}
 	updated := make([]domain.NetworkAttachment, 0, len(snapshot.Networks))

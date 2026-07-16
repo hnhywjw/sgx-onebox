@@ -20,6 +20,8 @@ func boolPtr(v bool) *bool { return &v }
 
 var ErrNotFound = errors.New("not found")
 
+var ErrConflict = errors.New("resource conflict")
+
 func seed() Snapshot {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return Snapshot{

@@ -152,7 +152,14 @@ export function SystemTab({
 
   const downloadCSV = (filename: string, headers: string[], rows: string[][]) => {
     const bom = '\uFEFF';
-    const csv = bom + [headers.join(','), ...rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
+    const esc = (v: string) => {
+      const s = String(v);
+      if (s.startsWith('=') || s.startsWith('+') || s.startsWith('-') || s.startsWith('@')) {
+        return `"'${s.replace(/"/g, '""')}"`;
+      }
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const csv = bom + [headers.join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

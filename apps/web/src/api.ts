@@ -49,11 +49,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (method !== 'GET' && method !== 'HEAD') {
     headers['Content-Type'] = 'application/json';
   }
-  const response = await fetch(path, {
-    credentials: 'include' as RequestCredentials,
-    headers,
-    ...options,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      credentials: 'include' as RequestCredentials,
+      headers,
+      ...options,
+    });
+  } catch (e) {
+    throw new ApiError(0, '网络连接失败，请检查网络后重试');
+  }
 
   if (!response.ok) {
     const errorBody = (await response.json().catch(() => ({ error: '请求失败' }))) as { error?: string };
@@ -116,11 +121,7 @@ export const api = {
 	resetClusterUpgrade: () => request<{ status: string }>('/api/v1/cluster/upgrade', { method: 'PUT' }),
 	getAlertThreshold: () => request<AlertThresholdConfig>('/api/v1/cluster/alert-threshold'),
 	saveAlertThreshold: (payload: AlertThresholdConfig) => request<AlertThresholdConfig>('/api/v1/cluster/alert-threshold', { method: 'PUT', body: JSON.stringify(payload) }),
-	fetchK3sVersions: async (channel: string): Promise<string[]> => {
-		const res = await fetch(`/api/v1/cluster/k3s-versions?channel=${encodeURIComponent(channel)}`, { credentials: 'include' });
-		if (!res.ok) throw new Error('获取 K3s 版本失败');
-		return res.json() as Promise<string[]>;
-	},
+	fetchK3sVersions: (channel: string) => request<string[]>(`/api/v1/cluster/k3s-versions?channel=${encodeURIComponent(channel)}`),
 	uploadFile: (file: File, uploadType: string = 'packages', onProgress?: (percent: number) => void) => new Promise<{ path: string; name: string; size: number }>((resolve, reject) => {
 		const formData = new FormData();
 		formData.append('file', file);

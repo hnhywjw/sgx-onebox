@@ -2564,7 +2564,7 @@ func sameOriginRequest(r *http.Request) bool {
 				return true
 			}
 			log.Printf("[SECURITY] request missing Origin and Referer headers from %s", r.RemoteAddr)
-			return true
+			return false
 		}
 		return isTrustedOriginReferrer(referer)
 	}
@@ -2841,6 +2841,10 @@ func writeError(w http.ResponseWriter, code int, err error) {
 func writeServiceError(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if errors.Is(err, store.ErrConflict) {
+		writeError(w, http.StatusConflict, err)
 		return
 	}
 	writeError(w, http.StatusBadRequest, err)
