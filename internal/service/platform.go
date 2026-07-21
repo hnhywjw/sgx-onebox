@@ -36,6 +36,11 @@ import (
 
 var ErrAccountLocked = errors.New("账号已锁定")
 
+const (
+	maxClusterLogs   = 1000
+	maxClusterAlerts = 1000
+)
+
 type session struct {
 	Token       string
 	User        string
@@ -118,11 +123,8 @@ func (a *nodeStoreAdapter) SaveClusterNodes(nodes []domain.ClusterNode) error {
 	defer a.svc.writeMu.Unlock()
 	snapshot := a.svc.store.Snapshot()
 	snapshot.ClusterNodes = nodes
-	if err := a.svc.store.Replace(snapshot); err != nil {
-		log.Printf("[executor] SaveClusterNodes persist failed: %v", err)
-		return err
-	}
-	return nil
+	snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "executor", "sync-cluster-nodes", "cluster", fmt.Sprintf("已同步 %d 个节点", len(nodes)))
+	return a.svc.persistWithReport(snapshot)
 }
 
 func (a *nodeStoreAdapter) SaveClusterNodeStatus(node domain.ClusterNode) error {
@@ -160,11 +162,7 @@ func (a *nodeStoreAdapter) SaveClusterNodeStatus(node domain.ClusterNode) error 
 		current.RxRate = node.RxRate
 		current.TxRate = node.TxRate
 		snapshot.ClusterNodes[index] = current
-		if err := a.svc.store.Replace(snapshot); err != nil {
-			log.Printf("[executor] SaveClusterNodeStatus persist failed for %s: %v", node.ID, err)
-			return err
-		}
-		return nil
+		return a.svc.persistWithReport(snapshot)
 	}
 	return store.ErrNotFound
 }
@@ -617,14 +615,36 @@ func (s *PlatformService) cleanExpiredSessions() {
 			}
 		}
 	}()
+	snapshot := s.store.Snapshot()
+	cleanupLoginFailures := false
+	if snapshot.LoginLockedUntil != nil {
+		for username, lockedUntil := range snapshot.LoginLockedUntil {
+			lockedTime, err := time.Parse(time.RFC3339, lockedUntil)
+			if err != nil || now.After(lockedTime) {
+				delete(snapshot.LoginLockedUntil, username)
+				delete(snapshot.LoginFailures, username)
+				cleanupLoginFailures = true
+			}
+		}
+	}
 	if changed {
-		s.writeSessionsToSnapshot()
+		s.applySessionsToSnapshot(&snapshot)
+	}
+	if changed || cleanupLoginFailures {
+		if err := s.store.Replace(snapshot); err != nil {
+			log.Printf("cleanExpiredSessions: Replace failed: %v", err)
+		}
 	}
 }
 
 func (s *PlatformService) StartSessionCleanup() {
 	s.executor.Start(context.Background())
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[session-cleanup] panic recovered: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 		auditTicker := time.NewTicker(1 * time.Hour)
@@ -1037,9 +1057,9 @@ func (s *PlatformService) runImageBuild(image domain.ImageAsset, request domain.
 					RecordedAt: time.Now().UTC().Format(time.RFC3339),
 				}}, snapshot.ClusterLogs...)
 				snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "build-image-result", snapshot.Images[i].Name, "timeout")
-				if err := s.store.Replace(snapshot); err != nil {
-					log.Printf("[image-build] timeout persist for %s failed: %v", image.ID, err)
-				}
+			if err := s.store.Replace(trimSnapshotCollections(snapshot)); err != nil {
+				log.Printf("[image-build] timeout persist for %s failed: %v", image.ID, err)
+			}
 				break
 			}
 		}
@@ -1067,7 +1087,7 @@ func (s *PlatformService) _runImageBuild(ctx context.Context, image domain.Image
 						RecordedAt: now,
 					}}, snapshot.ClusterLogs...)
 					snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "build-image-result", snapshot.Images[i].Name, "critical-error")
-					if err := s.store.Replace(snapshot); err != nil {
+					if err := s.store.Replace(trimSnapshotCollections(snapshot)); err != nil {
 						log.Printf("[image-build] panic persist for %s failed: %v", image.ID, err)
 					}
 					break
@@ -1078,6 +1098,10 @@ func (s *PlatformService) _runImageBuild(ctx context.Context, image domain.Image
 	execOK, execMsg := s.executor.ExecuteImageBuild(request)
 	imageID := image.ID
 	now := time.Now().UTC().Format(time.RFC3339)
+
+	if ctx.Err() != nil {
+		return
+	}
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -1110,7 +1134,7 @@ func (s *PlatformService) _runImageBuild(ctx context.Context, image domain.Image
 				resultLabel = "failure"
 			}
 			snapshot.AuditEvents = appendAuditEvent(snapshot.AuditEvents, "platform", "build-image-result", snapshot.Images[i].Name, resultLabel)
-			if err := s.store.Replace(snapshot); err != nil {
+			if err := s.store.Replace(trimSnapshotCollections(snapshot)); err != nil {
 				log.Printf("[image-build] persist result for %s failed: %v", imageID, err)
 			}
 			break
@@ -3225,6 +3249,11 @@ func (s *PlatformService) DispatchPluginHook(event string, payload map[string]st
 		go func(ep string) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[plugin] webhook goroutine panic for %s: %v", ep, r)
+				}
+			}()
 			if !isSafeEndpoint(ep) {
 				log.Printf("[plugin] webhook endpoint blocked (private IP): %s", ep)
 				return
@@ -3278,7 +3307,7 @@ func isSafeEndpoint(rawURL string) bool {
 		if v4 := ip.To4(); v4 != nil {
 			ip = v4
 		}
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() || isSpecialUseIP(ip) {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsPrivate() || ip.IsUnspecified() || isSpecialUseIP(ip) {
 			return false
 		}
 		return true
@@ -3292,7 +3321,7 @@ func isSafeEndpoint(rawURL string) bool {
 		if v4 == nil {
 			v4 = resolvedIP
 		}
-		if v4.IsLoopback() || v4.IsLinkLocalUnicast() || v4.IsLinkLocalMulticast() || v4.IsPrivate() || v4.IsUnspecified() || isSpecialUseIP(v4) {
+		if v4.IsLoopback() || v4.IsLinkLocalUnicast() || v4.IsLinkLocalMulticast() || v4.IsMulticast() || v4.IsPrivate() || v4.IsUnspecified() || isSpecialUseIP(v4) {
 			return false
 		}
 	}
@@ -3876,7 +3905,17 @@ func (s *PlatformService) RunCompliance(actor string) (domain.ComplianceReport, 
 }
 
 func (s *PlatformService) persistWithReport(snapshot store.Snapshot) error {
-	return s.store.Replace(snapshot)
+	return s.store.Replace(trimSnapshotCollections(snapshot))
+}
+
+func trimSnapshotCollections(snapshot store.Snapshot) store.Snapshot {
+	if len(snapshot.ClusterLogs) > maxClusterLogs {
+		snapshot.ClusterLogs = snapshot.ClusterLogs[:maxClusterLogs]
+	}
+	if len(snapshot.ClusterAlerts) > maxClusterAlerts {
+		snapshot.ClusterAlerts = snapshot.ClusterAlerts[:maxClusterAlerts]
+	}
+	return snapshot
 }
 
 func (s *PlatformService) buildComplianceReport(snapshot store.Snapshot) domain.ComplianceReport {

@@ -74,17 +74,25 @@ func (e *Executor) Start(ctx context.Context) {
 
 		logDebug(fmt.Sprintf("executor started, poll interval=%v, ssh timeout=%v", e.pollInterval, e.sshTimeout))
 
-		for {
-			select {
-			case <-ticker.C:
-				e.pollOnce()
-			case <-e.stopCh:
-				logDebug("executor stopped")
-				return
-			case <-ctx.Done():
-				logDebug("executor cancelled")
-				return
-			}
+		done := false
+		for !done {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[executor] poll cycle panic recovered: %v", r)
+					}
+				}()
+				select {
+				case <-ticker.C:
+					e.pollOnce()
+				case <-e.stopCh:
+					logDebug("executor stopped")
+					done = true
+				case <-ctx.Done():
+					logDebug("executor cancelled")
+					done = true
+				}
+			}()
 		}
 	}()
 }

@@ -36,11 +36,12 @@ type rateLimitEntry struct {
 }
 
 type Server struct {
-	service  *service.PlatformService
-	captchaM sync.Mutex
-	captchas map[string]captchaChallenge
-	rateLimitM  sync.Mutex
-	rateLimits  map[string]*rateLimitEntry
+	service             *service.PlatformService
+	captchaM            sync.Mutex
+	captchas            map[string]captchaChallenge
+	rateLimitM          sync.Mutex
+	rateLimits          map[string]*rateLimitEntry
+	lastRateLimitCleanup time.Time
 	k3sCache *struct {
 		mu    sync.RWMutex
 		items map[string]struct {
@@ -146,7 +147,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.service.Health(); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "db": err.Error()})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "db": "disconnected"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "db": "connected"})
@@ -162,7 +163,7 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 2<<30)
+	r.Body = http.MaxBytesReader(w, r.Body, 500<<20)
 
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -2877,17 +2878,17 @@ func (s *Server) checkLoginRateLimit(ip string) bool {
 	s.rateLimitM.Lock()
 	defer s.rateLimitM.Unlock()
 	now := time.Now().UTC()
+	if now.After(s.lastRateLimitCleanup.Add(5 * time.Minute)) {
+		for k, v := range s.rateLimits {
+			if now.After(v.windowStart.Add(time.Minute)) {
+				delete(s.rateLimits, k)
+			}
+		}
+		s.lastRateLimitCleanup = now
+	}
 	entry, exists := s.rateLimits[ip]
 	if !exists || now.After(entry.windowStart.Add(time.Minute)) {
 		s.rateLimits[ip] = &rateLimitEntry{count: 1, windowStart: now}
-		// Cleanup expired entries every 100 checks
-		if len(s.rateLimits)%100 == 0 {
-			for k, v := range s.rateLimits {
-				if now.After(v.windowStart.Add(time.Minute)) {
-					delete(s.rateLimits, k)
-				}
-			}
-		}
 		return true
 	}
 	entry.count++

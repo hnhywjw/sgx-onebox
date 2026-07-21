@@ -325,11 +325,11 @@ func (e *Executor) ExecuteUpgrade(targetVersion string) (bool, string) {
 			logWarn(fmt.Sprintf("ssh client for %s: %v", node.Name, err))
 			return false, fmt.Sprintf("控制面节点 %s 连接失败: %v", node.Name, err)
 		}
-		defer client.Close()
 		dir := k3sUpgradeWorkDir(targetVersion)
 		version := targetVersion
 		cmd := fmt.Sprintf("set -e; script=\"%s/install.sh\"; if [ -x \"$script\" ]; then INSTALL_K3S_VERSION='%s' \"$script\"; else curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='%s' sh -; fi", dir, version, version)
 		output, execErr := sshExec(client, cmd, e.sshTimeout*30)
+		client.Close()
 		if execErr != nil {
 			return false, fmt.Sprintf("控制面节点 %s 升级命令执行失败: %v", node.Name, execErr)
 		}
@@ -355,10 +355,10 @@ func (e *Executor) ExecuteUpgradeDownload(targetVersion string) (bool, string) {
 			logWarn(fmt.Sprintf("ssh client for %s: %v", node.Name, err))
 			return false, fmt.Sprintf("控制面节点 %s 连接失败: %v", node.Name, err)
 		}
-		defer client.Close()
 		dir := k3sUpgradeWorkDir(targetVersion)
 		cmd := fmt.Sprintf("set -e; mkdir -p \"%s\"; if command -v curl >/dev/null 2>&1; then curl -sfL https://get.k3s.io -o \"%s/install.sh\"; elif command -v wget >/dev/null 2>&1; then wget -q https://get.k3s.io -O \"%s/install.sh\"; else echo curl or wget is required; exit 127; fi; chmod +x \"%s/install.sh\"; test -s \"%s/install.sh\"", dir, dir, dir, dir, dir)
 		output, execErr := sshExec(client, cmd, e.sshTimeout*20)
+		client.Close()
 		if execErr != nil {
 			return false, fmt.Sprintf("控制面节点 %s 升级脚本下载失败: %v", node.Name, execErr)
 		}

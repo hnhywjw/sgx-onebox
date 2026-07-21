@@ -72,6 +72,11 @@ func sshExecWithInput(client *ssh.Client, cmd string, input io.Reader, timeout t
 
 	done := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("ssh exec goroutine panic: %v", r)
+			}
+		}()
 		done <- session.Run(cmd)
 	}()
 
@@ -107,6 +112,11 @@ func sshUploadFileBase64(client *ssh.Client, localPath string, remotePath string
 	}
 	reader, writer := io.Pipe()
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[ssh] upload goroutine panic: %v", r)
+			}
+		}()
 		defer file.Close()
 		encoder := base64.NewEncoder(base64.StdEncoding, writer)
 		_, copyErr := io.Copy(encoder, file)
