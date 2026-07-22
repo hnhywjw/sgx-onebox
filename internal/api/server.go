@@ -348,12 +348,12 @@ func (s *Server) handleCaptcha(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	answer, err := randomDigits(4)
+	answer, err := randomCaptcha(4)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("生成验证码失败"))
 		return
 	}
-	idToken, err := randomDigits(12)
+	idToken, err := randomCaptcha(12)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, errors.New("生成验证码失败"))
 		return
@@ -376,14 +376,15 @@ func captchaImageData(answer string) string {
 	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 }
 
-func randomDigits(length int) (string, error) {
+func randomCaptcha(length int) (string, error) {
+	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	result := make([]byte, length)
 	for i := 0; i < length; i++ {
-		n, err := rand.Int(rand.Reader, big.NewInt(10))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
 		if err != nil {
 			return "", err
 		}
-		result[i] = byte('0' + n.Int64())
+		result[i] = charset[n.Int64()]
 	}
 	return string(result), nil
 }
@@ -396,7 +397,7 @@ func (s *Server) validateCaptcha(id, answer string) bool {
 	if !ok || time.Now().UTC().After(challenge.ExpiresAt) {
 		return false
 	}
-	return challenge.Answer == strings.TrimSpace(answer)
+	return strings.EqualFold(challenge.Answer, strings.TrimSpace(answer))
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

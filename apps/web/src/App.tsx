@@ -7,6 +7,8 @@ import type {
 } from './types';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import DashboardTab from './components/DashboardTab';
+
+declare const __APP_VERSION__: string;
 import { DeploymentTab } from './components/DeploymentTab';
 import { SecurityTab } from './components/SecurityTab';
 import { TrustedTab } from './components/TrustedTab';
@@ -500,7 +502,15 @@ export default function App() {
               </div>
               <div className="section-head" style={{ marginTop: 2 }}>
                 <div className="inline-card" style={{ flex: 1, justifyContent: 'flex-start', gap: 10 }}>
-                  <input className="captcha-input" placeholder="4位数字" title="输入右侧图片中的 4 位数字验证码" value={captchaAnswer} maxLength={4} inputMode="numeric" onChange={e => setCaptchaAnswer(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+<input
+              className="captcha-input"
+              placeholder="4位验证码"
+              title="输入右侧图片中的 4 位验证码"
+              value={captchaAnswer}
+              maxLength={4}
+              autoComplete="off"
+              onChange={e => setCaptchaAnswer(e.target.value.replace(/[^0-9A-Za-z]/g, '').toUpperCase().slice(0, 4))}
+            />
                   <button type="button" className="captcha-code" onClick={() => { setLoginError(''); void refreshCaptcha(); }} title="点击刷新验证码">{captchaImage ? <img src={captchaImage} alt="验证码" style={{ height: 32, display: 'block' }} /> : '----'}</button>
                 </div>
                 <div className="checkbox">
@@ -511,6 +521,7 @@ export default function App() {
               <button type="submit" className="login-submit" disabled={loginLoading || !username || !password || captchaAnswer.length !== 4}>
                 {loginLoading ? '登录中...' : '登录'}
               </button>
+              <p className="login-version">软件版本号：v{__APP_VERSION__}</p>
               <p className="login-copyright">© 2026 SGX OneBOX. All rights reserved.</p>
               {sessionExpired && <p className="login-message login-message-error">会话已过期，请重新登录</p>}
               {loginError && <p className="login-message login-message-error">{loginError}</p>}
@@ -548,6 +559,10 @@ export default function App() {
         <div className="sidebar-user-actions">
           <button className="sidebar-action-button" onClick={() => { setError(''); setSuccess(''); setShowChangePassword(true); }}>修改密码</button>
           <button className="sidebar-action-button sidebar-action-danger" onClick={handleLogout}>退出</button>
+        </div>
+        <div className="sidebar-footer">
+          <span className="sidebar-version">软件版本号：v{__APP_VERSION__}</span>
+          <span className="sidebar-copyright">© 2026 SGX OneBOX. All rights reserved.</span>
         </div>
       </aside>
 
